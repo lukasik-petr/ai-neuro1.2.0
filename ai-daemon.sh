@@ -35,13 +35,13 @@ UNITS_1="79"        # LSTM=91, DENSE=79
 UNITS_2="0"         # LSTM=91, DENSE=79
 MODEL_1="DENSE"     # typ vrstvy_1 LSTM DENSE GRU CONV1D
 MODEL_2=""          # typ vrstvy_2 LSTM DENSE GRU CONV1D
-EPOCHS="49"         # Poc. treninkovych cyklu
+EPOCHS="500"        # Poc. treninkovych cyklu
 LAYERS_1="2"        # pocet vrstev v prvni sekci
 LAYERS_2="0"        # pocet vrstev v druhe sekci
 BATCH="128"         # pocet vzorku do predikce
 DBMODE="True"       # implicitne v debug modu - nezapisuje do PLC
 INTERPOLATE="False" # TRUE FALSE -interpolace splinem
-LRNRATE="0.0005"    # learning rate <0.0002, 0.002>
+LRNRATE="0.007"     # learning rate <0.0002, 0.002>
 RETVAL=0
 
 #----------------------------------------------------------------------
@@ -109,8 +109,17 @@ done
 
 #----------------------------------------------------------------------
 # implicitni parametry - nejsou zadavany z 'cmd lajny'
+# selu     - vyborna Z (z, RMSE=3) dobra Y (y, RMSE=6)
+# sigmoid  - horsi predikce (Y,Z, RMSE=8)
+# elu      - dobre vysledky (Y,Z, RMSE=5)
+# relu     - dobra Z (Z, RMSE=5) horsi Y (y, RMSE=8)
+# softmax  - nepouzitelna (RMSE > 50)
+# tanh     - dobra Z (Z, RMSE=4) horsi Y (y, RMSE=8)
+# softsign - dobra Z (Z, RMSE=4) horsi Y (y, RMSE=8), dlouhy trenink
+# softsign - spatna  (Z, RMSE=5) spatnaY (y, RMSE=9),
+# swish    - dobra Z (Z, RMSE=4) horsi Y (y, RMSE=8), dlouhy trenink
 #----------------------------------------------------------------------
-ACTF="elu"          #elu , relu, sigmoid ....
+ACTF="selu"  #elu, relu, sigmoid ....
 TXDAT1="2022-01-01 00:00:01"
 TXDAT2=`date +%Y-%m-%d -d "yesterday"`" 23:59:59"
 OPTIONS=""
@@ -134,6 +143,7 @@ echo "        ACTF="$ACTF
 echo "     LRNRATE="$LRNRATE
 echo "      TXDAT1="$TXDAT1
 echo "      TXDAT2="$TXDAT2
+echo "       ILCNT="$ILCNT
 
 #----------------------------------------------------------------------
 # start_daemon - aktivace miniconda a start demona

@@ -89,8 +89,8 @@ done
      --units_2="$UNITS_2" \
      --layers_1="$LAYERS_1" \
      --layers_2="$LAYERS_2" \
-     --interpolate="$INTERPOLATE" 
-     --lrnrate="$LRNRATE" \
+     --interpolate="$INTERPOLATE" \
+     --lrnrate="$LRNRATE" 
 
 echo "ai-daemon start..."
 exit 0

@@ -1,0 +1,85 @@
+prerekvizity
+----------------------------------------------------------------------
+sudo apt install build-essentials               -- nejnovejsi gcc
+sudo apt-get install linux-headers-$(uname -r)  -- linux headers
+
+Je striktně doporučeno instalovat CUDA a CUDnn z deb balíčků a pokud
+možno se vyhnout instalaci ze spustitelného souboru. Ten poruší mecha-
+nismus update.
+
+
+disable nouveau
+---------------------------------------------------------------------
+1. sudo emacs /etc/modprobe.d/blacklist-nouveau.conf
+
+   blacklist nouveau
+   options nouveau modeset=0
+
+2. sudo update-initramfs -u 
+
+
+
+cuda install - Při instalaci CUDy je lépe dodržet postup uvedený
+na stránkách NVIDIA a a to co je uvedeno níže, brát jen informativně.
+(i když níže uvedená instalace je ověřena a funkční s TensorFlow)
+---------------------------------------------------------------------
+wget https://developer.download.nvidia.com/compute/cuda/11.6.0/local_installers/cuda-repo-debian11-11-6-local_11.6.0-510.39.01-1_amd64.deb
+sudo dpkg -i cuda-repo-debian11-11-6-local_11.6.0-510.39.01-1_amd64.deb
+sudo apt-key add /var/cuda-repo-debian11-11-6-local/7fa2af80.pub
+sudo add-apt-repository contrib
+sudo apt-get update
+sudo apt-get -y install cuda
+
+
+cudNN install
+--------------------------------------------------------------------
+Stáhněte si instalační balíček místního úložiště Debian. Před zadáním
+následujících příkazů musíte nahradit X.Y a 8.x.x.x vašimi konkrétními
+verzemi CUDA a cuDNN. Ze zkušenosti není obvykle snadné se trefit do
+přesného releasu knihoven, libcudnn. Proto postačí jen základní verze:
+
+Např. install libcudnn8+cuda11.6
+
+Postup
+Instalace z .deb
+    sudo dpkg -i cudnn-local-repo-${OS}-8.x.x.x_1.0-1_amd64.deb
+
+Import CUDA GPG key.
+    sudo cp /var/cudnn-local-repo-*/cudnn-local-*-keyring.gpg /usr/share/keyrings/
+
+Refresh repozitáře.
+    sudo apt-get update
+
+Instalace runtime knihoven
+    sudo apt-get install libcudnn8=8.x.x.x-1+cudaX.Y
+
+Instalace developer knihoven
+    sudo apt-get install libcudnn8-dev=8.x.x.x-1+cudaX.Y
+
+Instalace samplu a cuDNN dokumentace.
+    sudo apt-get install libcudnn8-samples=8.x.x.x-1+cudaX.Y
+
+
+X server
+-------------------------------------------------------------------------
+lspci -nnk | grep -i -A 3 vga
+
+uzitecne
+---------------------------------------------------------------------
+lspci -nnk | grep -i -A 3 vga                   -- list ovladace
+sudo service  gdm3 stop                         -- stop X server
+sudo service  gdm stop                          -- stop X server
+sudo update-initramfs -u                        -- uplatneni zmen
+sudo apt remove --purge '^libnvidia-.*'^C       -- purge
+sudo apt remove --purge '^nvidia-.*'^C          -- purge
+sudo apt remove --purge '^cuda-.*'^C            -- purge
+uname -m && cat /etc/*release                   -- release linuxu
+uname -r                                        -- verze jadra
+lspci | grep -i nvidia                          -- kompatibilita ovladace                        
+sudo service networking restart                 -- restart network
+nvidia-smi                                      -- list ovladace
+
+Monitor GPU
+---------------------------------------------------------------------
+watch -n 1 nvidia-smi 
+

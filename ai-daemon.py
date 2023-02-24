@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 #------------------------------------------------------------------------
-#    ai-daemon V.1.2.0
+#    ai-daemon V.1.2.1
 #   
 #    predikce vlivu teploty na presnost obrabeni
 #
@@ -64,11 +64,45 @@
 #          conda install pandas
 #          conda install numpy
 #          conda install keras
-#          conda install lockfile
 #          conda install pickle
 #   
 #     6. v prostredi tf jeste upgrade tensorflow 
 #          pip3 install --upgrade tensorflow
+#
+#------------------------------------------------------------------------
+#     Nejlepsi zakladni parametry
+#------------------------------------------------------------------------
+#      jmeno testu=test01 ,
+#           status=run ,
+#          units_1=230 ,
+#          units_2=230 ,
+#          model_1=DENSE ,
+#          model_2=GRU ,
+#            epoch=500 ,
+#         layers_1=2 ,
+#         layers_2=1 ,
+#            batch=256 ,
+#       debug mode=True ,
+#      interpolace=False ,
+#          lrnrate=0.007 ,
+#             ACTF="selu"  #elu, relu, sigmoid ....
+#            ILCNT="1"     #1 - 8
+#          SHUFFLE="True"  #True, False
+#        #parametry window-size
+#     self.windowX=4;      #min 0, max 64
+#        #parametry window-size
+#     self.windowY=4;      #min 0, max 64
+#        #parametry time-observe...
+#        self.n_in=3;      #min 0, max 6
+#       self.n_out=3;      #min 0, max 6
+#
+#     testovaci soubory....................:
+#     -rwxr-xr-x 1 plukasik plukasik 3840078 Feb 23 20:50 ./br_data/predict-debug.csv
+#     -rwxr-xr-x 1 plukasik plukasik 1398180 Feb 23 20:50 ./br_data/tm-ai_2022-11-v2vut.csv
+#     -rwxr-xr-x 1 plukasik plukasik  676705 Feb 23 20:50 ./br_data/tm-ai_2022-11-v3vut.csv
+#     -rwxr-xr-x 1 plukasik plukasik 1754187 Feb 23 20:50 ./br_data/tm-ai_2023-01-v2vut.csv
+#     testovaci soubory....................:
+#
 #------------------------------------------------------------------------
 # import vseho co souvisi s demonem...
 #------------------------------------------------------------------------
@@ -108,8 +142,9 @@ import pickle;
 from matplotlib import cm;
 from os.path import exists;
 
-from dateutil import parser
+from dateutil import parser;
 from sklearn.preprocessing import MinMaxScaler;
+from sklearn.preprocessing import StandardScaler;
 from sklearn.metrics import mean_squared_error;
 from sklearn.metrics import max_error;
 from sklearn.utils import shuffle;
@@ -140,6 +175,7 @@ from tensorflow.keras.layers import GRU;
 from tensorflow.keras.layers import Conv1D;
 from tensorflow.keras.layers import Dropout
 from tensorflow.keras.models import load_model
+from tensorflow.keras.callbacks import EarlyStopping
 
 from _cffi_backend import string
 #scipy
@@ -168,6 +204,9 @@ try:
 except ImportError:
     is_train = None
 
+from keras import backend as K
+    
+
 #logger
 import logging
 import logging.config
@@ -182,6 +221,17 @@ log_handler = None;
 df_debug_count=0;
 df_debug_header=[];
 
+'''
+def root_mean_squared_error(y_true, y_pred):
+    return K.sqrt(K.mean(K.square(y_pred - y_true)))
+
+def mse(y_true, y_pred):
+    return K.mean(K.square(y_pred - y_true)) + K.max(K.abs(y_pred - y_true), axis=0)
+
+def mae(y_true, y_pred):
+    return K.max(K.abs(y_pred - y_true), axis=0)
+    
+'''
 #------------------------------------------------------------------------
 # OPCAgent
 #------------------------------------------------------------------------
@@ -555,39 +605,6 @@ class OPCAgent():
             client.disconnect();
                 
     
-#------------------------------------------------------------------------
-# prepJitter,  setJitter
-#------------------------------------------------------------------------
-#    v pripade ze se v prubehu cteciho cykluz OPC zadna data nemeni 
-#    pridame jim umele trochu sumu, ktery nezhorsi presnost ale umozni
-#    neuronove siti presnejsi predikci. Sit se prilis nedokaze vyrovnat 
-#    s konstantnim prubehem datove sady.
-#------------------------------------------------------------------------
-    def prepJitter(self, df_size):
-        
-        jitter = np.random.normal(0, .0005, df_size);
-        for i in range(len(jitter)):
-            jitter[i] = self.myFloatFormat(jitter[i]);
-        return jitter;    
-        #return(pd.DataFrame(jitter, columns=["jitter"]));
-
-#------------------------------------------------------------------------
-# prepJitter,  setJitter
-#------------------------------------------------------------------------
-    def setJitter(self, df, df_parms, jitter_=False):
-        
-        if not jitter_:
-            return(df);
-        
-        df_size = len(df);
-        
-        for col in df.head():
-            if  col in df_parms and ptypes.is_numeric_dtype(df[col]):
-                jitter = self.prepJitter(df_size);
-                df[col].apply(lambda x: np.asarray(x) + np.asarray(jitter));
-        return(df);
-    
-    
 
 #------------------------------------------------------------------------
 # opcCollectorGetPLCdata
@@ -631,9 +648,7 @@ class OPCAgent():
                 
             df_predict.loc[len(df_predict)] = data;
             time.sleep(self.plc_timer);
-            
-        # add jitter 
-        df_predict = self.setJitter(df_predict, df_parms, True);
+         
         
         # zapis nova treninkova data
         self.logger.debug("Zapis do: "+str(path_to_df));
@@ -700,8 +715,6 @@ class OPCAgent():
                 
         df_debug_count += self.batch;
         
-        # add jitter
-        df_predict = self.setJitter(df_predict, df_parms, False);
         #df_predict.to_csv("./result/temp"+current_date+".csv");
         self.logger.debug("Nacteno "+str(self.batch)+" vzorku dat pro predict");
         return(df_predict);
@@ -745,16 +758,15 @@ class OPCAgent():
 #------------------------------------------------------------------------
 class DataFactory():
 
-    df_parmX_predict = [];
-    
     @dataclass
     class DataTrain:
         model:     object              #model neuronove site
         train:     object              #treninkova mnozina
         valid:     object              #validacni mnozina
         test:      object              #testovaci mnozina
-        df_parm_x: string              #mnozina vstup dat (df_parmx, df_parmy, df_parmz
-        df_parm_y: string              #mnozina vstup dat (df_parmX, df_parmY, df_parmZ
+        df_parmx:  object              #mnozina vstup dat (df_parmx
+        df_parmY:  object              #mnozina vstup dat (df_parmY
+        df_parmS:  object              #mnozina vstup a vyst dat (df_parmS
         axis:      string              #osa X, Y, Z
 
 
@@ -781,34 +793,12 @@ class DataFactory():
         
     #Vystupni list parametru - co budeme chtit po siti predikovat
         self.df_parmx = [];
-                       # 'temp_S1',
-                       # 'temp_vr01',
-                       # 'temp_vr02',
-                       # 'temp_vr03',
-                       # 'temp_vr04',
-                       # 'temp_vr05',
-                       # 'temp_vr06',
-                       # 'temp_vr07'];
-        
     #Tenzor predlozeny k uceni site
-        self.df_parmX = [];
-                       # 'dev_x4',
-                       # 'dev_y4',
-                       # 'dev_z4', 
-                       # 'temp_S1',
-                       # 'temp_vr01',
-                       # 'temp_vr02',
-                       # 'temp_vr03',
-                       # 'temp_vr04',
-                       # 'temp_vr05',
-                       # 'temp_vr06',
-                       # 'temp_vr07'];
+        self.df_parmY = [];
+        self.df_parmS = [];               
         
         self.path_to_result = path_to_result;
         self.df_multiplier  = 1;   
-        self.train          = pd.DataFrame();
-        self.valid          = pd.DataFrame();
-        self.predict        = pd.DataFrame();
         self.debug_mode     = debug_mode;
         self.batch          = batch;
         self.current_date   = current_date;
@@ -828,13 +818,11 @@ class DataFactory():
                       "curr_txdat"];
 
         self.df_recc = 0;
-
-
-        #parametry z parm file - nacte parametry z ./parms/parms.txt
-        self.getParmsFromFile();
         # new OPCAgent()
         self.opc = OPCAgent(batch=self.batch, debug_mode=self.debug_mode);
-
+        #parametry z parm file - nacte parametry z ./parms/parms.txt
+        self.getParmsFromFile();
+        
 
 #------------------------------------------------------------------------
 # interpolateDF
@@ -845,7 +833,7 @@ class DataFactory():
     def interpolateDF(self, df, s_factor=0.001, ip_yesno=True, part="train"):
 
         test = False;
-        s_factor = 0.00001;
+        s_factor = 0.095;     #optimalni velicina
         
         if df is None:
             return None;
@@ -857,16 +845,26 @@ class DataFactory():
             self.logger.debug("interpolace artefaktu ip = True");
 
             
-        col_names = list(self.df_parmX);
+        col_names = list(self.df_parmS);
         x = np.arange(0, df.shape[0]);
 
         for i in range(len(col_names)):
            if "dev" in col_names[i]:
                
         #       #interpolace univariantnim splinem
-                spl =  UnivariateSpline(x, df[col_names[i]], s=s_factor);
+                spl =  UnivariateSpline(x, df[col_names[i]],
+                                        k = 3,
+                                        s = s_factor
+                       );
         #       #linearni interpolace
-                #spl =  interp1d(x, df[col_names[i]]);
+                #spl =  inter.interp1d(x, df[col_names[i]],
+                #                      kind = 'quadratic',
+                #                      axis = -1,
+                #                      copy = True, 
+                #                      bounds_error = None,
+                #                      assume_sorted = False
+                #);
+
                 df[col_names[i]] = spl(x);
 
                 
@@ -882,31 +880,60 @@ class DataFactory():
 
 #------------------------------------------------------------------------
 # setDataX(self, df,  size_train, size_valid, size_test)
+# dopruceny pomer train/valid
+#   60/40 -:- 70/30 pro mensi objemy dat
+#   80/20 -:- 90/10 pro velke dat
 #------------------------------------------------------------------------
-    def setDataX(self, df, df_test,  size_train, size_valid, size_test, txdt_b=False, shuffling=False):
-        #OSA XYZ
+    def setDataX(self, df, df_test):
         try:
-            
-            DataTrain_x = self.DataTrain;
-            DataTrain_x.train = pd.DataFrame(df[0 : size_train][self.df_parmX]);
-            DataTrain_x.valid = pd.DataFrame(df[size_train+1 : size_train + size_valid][self.df_parmX]);
-            
-            DataTrain_x.test  = df_test;
-            DataTrain_x.df_parm_x = self.df_parmx;  # data na ose x, pro rovinu X
-            DataTrain_x.df_parm_y = self.df_parmX;  # data na ose y, pro rovinu Y
-            DataTrain_x.axis = "OSA_XYZ";
-            
-            self.train = DataTrain_x.train;
-            self.valid = DataTrain_x.valid;
-            self.predict = DataTrain_x.test;
-            
-            return(DataTrain_x);
+
+            DataTrain      = self.DataTrain;
+            DataTrain.axis = "OSA_XYZ";
+
+            size             = len(df);
+
+            # df > 0 jen v okamziku "train"
+            if size > 0:
+                size_train       = math.floor(size * 7 / 10);
+                size_valid       = math.floor(size * 3 / 10);
+                self.df_recc     = size;
+                DataTrain.train     = pd.DataFrame(df[0 : size_train][DataTrain.df_parmS]);
+                DataTrain.valid     = pd.DataFrame(df[size_train+1 : size_train + size_valid][DataTrain.df_parmS]);
+            else:
+                DataTrain.train = None;
+                DataTrain.valid = None;
+
+            # df_test musi byt > 0 v rezimu "train" i "predict"...    
+            DataTrain.test      = df_test;
+
+            return(DataTrain);
     
         except Exception as ex:
             traceback.print_exc();
             self.logger.error(traceback.print_exc());
+            sys.exit(1);
 
-    
+#-----------------------------------------------------------------------
+# shuffData
+#-----------------------------------------------------------------------
+#    Na presnost predikce ma zasadni vliv rozlozeni dat pro
+#    trenovaci a validacni mnozinu - pokud se sejde nevhodna konstelace            
+#    (napriklad data pro trenik s divokymi prubehy
+#     a naopak pro validaci data s hladkymi prubehy), ma vyrazny
+#    vliv na kvalitu predikce proto je dobre jeste pred rozdelenim
+#    na treninkovou a validacni mnozinu udelat shuffling.
+#
+#    Shuffling se samozrejme dela i pri .model.fit(...)            
+#-----------------------------------------------------------------------
+    def shuffData(self, df ):
+                
+        df = df.reset_index(drop=True);
+        df = shuffle(df);
+        df = df.reset_index(drop=True);
+        self.logger.info("Shuffle...");
+                
+        return(df);
+
 #-----------------------------------------------------------------------
 # getData
 #-----------------------------------------------------------------------
@@ -918,7 +945,7 @@ class DataFactory():
 #    ramec.
 #-----------------------------------------------------------------------
     def getData(self,
-                shuffling       = False, 
+                shuffling       = True, 
                 timestamp_start = '2022-01-01 00:00:00', 
                 timestamp_stop  = '2099-12-31 23:59:59', 
                 type            = "predict",
@@ -926,21 +953,11 @@ class DataFactory():
                 ip_yesno        = True):
         
         txdt_b      = False;
-        df          = pd.DataFrame(columns = self.df_parmX);
-        df_test     = pd.DataFrame(columns = self.df_parmx);
-        
-        size_train  = 0;
-        size_valid  = 0;
-        size_test   = 0;
-        size        = 0;
-                            #  interpolacni faktor
-        s_factor    = 0.5   #  0.5 pro periodu 60[s]
-                            #  0.01 pro periodu 1[s]
+        df          = pd.DataFrame(columns = self.df_parmS);
+        df_test     = pd.DataFrame(columns = self.df_parmS);
         
         try:
            
-            #self.DataTrainDim.DataTrain = None;
-            
 #----------------------------------------------------------------------------- 
 # Data pro trenink - if type == "train"
 #----------------------------------------------------------------------------- 
@@ -960,8 +977,12 @@ class DataFactory():
             
                 # sort souboru pro join
                 joined_list.sort(key=None, reverse=False);
-                usecols = ["datetime"];
-                for col in self.df_parmX:
+
+                # definice sloupcu v dataframe ["datetime","tool", "state", "program"]
+                # plus sloupce z ai-parms.cfg
+                # Nebudeme cpat do pameti data, ktera nepotrebujeme...
+                usecols = ["datetime","tool", "state", "program"];
+                for col in self.df_parmS:
                     usecols.append(col);
 
                 df = pd.concat([pd.read_csv(csv_file,
@@ -975,8 +996,7 @@ class DataFactory():
                                     axis=0, 
                                     ignore_index=True
                     );
-                # Odfiltruj data kdy stroj byl vypnut
-                #df = df[(df["dev_y4"] != 0) & (df["dev_z4"] != 0)];
+                
                 # bordel pri domluve nazvoslovi...            
                 df.columns = df.columns.str.lower();
                 # interpoluj celou mnozinu data  
@@ -988,6 +1008,11 @@ class DataFactory():
                 # treninkova a validacni mnozina    
                 df = df[(df["timestamp"] > timestamp_start) & (df["timestamp"] <= timestamp_stop)];
                 
+                # Odfiltruj data kdy stroj byl vypnut
+                #df = df[(df["dev_y4"] != 0) & (df["dev_z4"] != 0)];
+                #Pouze  data ve stavu 2 - masina obrabi...
+                df = df[(df["state"] > 0)];
+                
                 if len(df) <= 1:
                     self.logger.error("Data pro trenink maji nulovou velikost - exit(1)");
                     sys.exit(1);
@@ -996,32 +1021,28 @@ class DataFactory():
                 #if self.debug_mode is True and ilcnt > 1:
                 if ilcnt > 1:
                     df = df.iloc[::ilcnt, :];
+                    
+                size = len(df);
+
+                if size > 0:
+                    self.logger.info("Data nactena, pocet vet: %d, ilcnt: %d " %(size, ilcnt));
+                #     
+                if shuffling is True:
+                    df = self.shuffData(df); 
             
                 df["index"] = pd.Index(range(0, len(df), 1));
                 df.set_index("index", inplace=True);
 
-                #dopruceny pomer train/valid
-                #   60/40 -:- 70/30 pro mensi objemy dat
-                #   80/20 -:- 90/10 pro velke dat
-
-                size = len(df);
-                size_train = math.floor(size * 8 / 12);
-                size_valid = math.floor(size * 4 / 12);
-                size_test  = math.floor(size * 0 / 12);
-                self.df_recc = size;
-                
-                if size > 0:
-                    self.logger.info("Data pro trenink nactena, pocet vet: %d, ilcnt: %d " %(size, ilcnt));
 
 #----------------------------------------------------------------------------- 
 # Data pro predict - if type == "train" || type == "predict"
 #----------------------------------------------------------------------------- 
             self.logger.debug("Data pro predikci....");
             if self.debug_mode is True:
-                df_test = self.opc.opcCollectorGetDebugData(self.df_parmX);
+                df_test = self.opc.opcCollectorGetDebugData(self.df_parmS);
             else:
                 self.logger.debug("Data pro predikci getPlcData....");
-                df_test = self.opc.opcCollectorGetPlcData(self.df_parmX);
+                df_test = self.opc.opcCollectorGetPlcData(self.df_parmS);
                 
             if df_test is None:
                 self.logger.error("Nebyla nactena zadna data pro predikci");
@@ -1030,24 +1051,17 @@ class DataFactory():
             else:    
                 df_test = self.interpolateDF(df=df_test, ip_yesno=ip_yesno, part="predict");
                 
-            if self.df_parmx is None or self.df_parmX is None:
+            if self.df_parmx is None or self.df_parmY is None:
                 pass;
             else:
-                self.DataTrainDim.DataTrain = self.setDataX( df=df, 
-                                                             df_test=df_test, 
-                                                             size_train=size_train, 
-                                                             size_valid=size_valid, 
-                                                             size_test=size_test,
-                                                             txdt_b=txdt_b,
-                                                             shuffling=shuffling 
-                                                        );
-            
+                self.DataTrainDim.DataTrain = self.setDataX(df=df, df_test = df_test); 
 
             return self.DataTrainDim(self.DataTrainDim.DataTrain);
 
         except Exception as ex:
             traceback.print_exc();
             self.logger.error(traceback.print_exc());
+            sys.exit(1);
             
 #-----------------------------------------------------------------------
 # saveDataToPLC  - result
@@ -1072,10 +1086,10 @@ class DataFactory():
         
         thread_name = thread_name[0 : len(thread_name) - 1].replace("_","");
         
-        col_names_y = list(self.DataTrain.df_parm_y);
+        col_names_Y = list(self.DataTrain.df_parmY);
         filename = "./result/plc_archiv/plc_"+thread_name+"_"+str(self.current_date)[0:10]+".csv"
         
-        df_result = pd.DataFrame(columns = col_names_y);
+        df_result = pd.DataFrame(columns = col_names_Y);
         df_append = pd.DataFrame();
         
         i = 0
@@ -1093,7 +1107,7 @@ class DataFactory():
 
         df_result = pd.concat(frames); 
         df_result = df_result.groupby("index").mean();
-        df_plc = self.formatToPLC(df_result, col_names_y);
+        df_plc = self.formatToPLC(df_result, col_names_Y);
                                       
         path = Path(filename)
         if path.is_file():
@@ -1148,7 +1162,7 @@ class DataFactory():
 #-----------------------------------------------------------------------
 # formatToPLC  - result
 #-----------------------------------------------------------------------
-    def formatToPLC(self, df_result, col_names_y):
+    def formatToPLC(self, df_result, col_names_Y):
         #curent timestamp UTC
         current_time = time.time()
         utc_timestamp = datetime.utcfromtimestamp(current_time);
@@ -1159,7 +1173,7 @@ class DataFactory():
         l_plc.append( str(utc_timestamp)[0:19]);
         l_plc_col.append("utc");
 
-        for col in col_names_y:
+        for col in col_names_Y:
             if "dev" in col:
                 mmean = self.myIntFormat(df_result[col].mean() *10000);   #prevod pro PLC (viz dokument Teplotni Kompenzace AI)
                 l_plc.append(mmean);                                  #  10 = 0.001 atd...
@@ -1187,8 +1201,8 @@ class DataFactory():
 
         filename="./result/res_"+str(self.current_date)[0:10]+"_"+model+ "_"+str(units)+ "_"+ str(epochs)+".csv";
         try:
-            col_names_y = list(self.DataTrain.df_parm_y);
-            col_names_x = list(self.DataTrain.df_parm_x);
+            col_names_Y = list(self.DataTrain.df_parmY);
+            col_names_x = list(self.DataTrain.df_parmx);
             
             col_names_predict = list("");
             col_names_drop    = list("");
@@ -1196,15 +1210,15 @@ class DataFactory():
             col_names_train   = list({"datetime"});
             col_names_dev     = list("");
             
-            for col in col_names_y:
+            for col in col_names_Y:
                 col_names_train.append(col);
             
-            for i in range(len(col_names_y)):
-                if "dev" in col_names_y[i]:
-                    col_names_predict.append(col_names_y[i]+"_predict");
-                    col_names_dev.append(col_names_y[i]);
+            for i in range(len(col_names_Y)):
+                if "dev" in col_names_Y[i]:
+                    col_names_predict.append(col_names_Y[i]+"_predict");
+                    col_names_dev.append(col_names_Y[i]);
                 else:    
-                    col_names_drop.append(col_names_y[i]);
+                    col_names_drop.append(col_names_Y[i]);
 
             for col in self.DataTrain.test.columns:
                 if col in col_names_train:
@@ -1349,53 +1363,60 @@ class DataFactory():
             file = open(Path(parmfile), "r")
             lines = file.readlines();
             
+            self.df_parmx = None;
+            self.df_parmY = None;
+
             count = 0
             for line in lines:
-                line = line.replace("","").replace("'","").replace(" ","");
+                line = line.replace("'","").replace(" ","");
                 line = line.strip();
+                
                 #if not line:
                 x = line.startswith("df_parmx=")
                 if x:
                     line = line.replace("df_parmx=", "").lower();
                     self.df_parmx = line.split(",");
                     if "null" in line:
-                        self.df_parmx = None;
-                        
-                X = line.startswith("df_parmX=");
-                if X:
-                    line = line.replace("df_parmX=", "").lower();
-                    self.df_parmX = line.split(",");
+                        pass;
+                    else:
+                        self.df_parmx = line.split(",");
+                    
+                Y = line.startswith("df_parmY=");
+                if Y:
+                    line = line.replace("df_parmY=", "").lower();
                     if "null" in line:
-                        self.df_parmX = None;
+                        pass;
+                    else:
+                        self.df_parmY = line.split(",");
+
             
+            if self.df_parmY is None: 
+                self.logger.error("Chyba formatu df_parmY  ./cfg/ai-parms.cfg, exit...");
+                sys.exit(1);
+
+            if self.df_parmx is None: 
+                self.logger.error("Chyba formatu df_parmx  ./cfg/ai-parms.cfg, exit...");
+                sys.exit(1);
                 
+
+            self.DataTrain.df_parmx = self.df_parmx;  # data na ose x, pro rovinu X
+            self.DataTrain.df_parmY = self.df_parmY;  # data na ose y, pro rovinu Y
+            self.DataTrain.df_parmS = self.df_parmY + self.df_parmx;
+            
+            self.df_parmS = self.df_parmY + self.df_parmx;
+          
             file.close();
             self.logger.info("parametry nacteny z "+ parmfile);       
                 
         except:
-            self.logger.error("Soubor parametru "+ parmfile + " nenalezen!");                
-            self.logger.info("Parametry pro trenink site budou nastaveny implicitne v programu");                 
+            self.logger.error("Soubor "+ parmfile + " nenalezen, nebo chyba formatu! exit...");
+            sys.exit(1);
         
         return();  
     
 #------------------------------------------------------------------------
 # DataFactory getter metody
 #------------------------------------------------------------------------
-    def getDf_parmx(self):
-        return self.df_parmx;
-    
-    def getDf_parmX(self):
-        return self.df_parmX;
-
-    def getDfTrainData(self):
-        return (self.train);
-    
-    def getDfValidData(self):
-        return (self.valid);
-    
-    def getDfPredictData(self):
-        return (self.predict);
-    
     def setParms(self, parms):
         self.parms = parms;
     
@@ -1433,6 +1454,121 @@ class DataFactory():
     def myIntFormat(self, x):
         return ('%.f' % x).rstrip('.');
 
+
+
+
+
+#------------------------------------------------------------------------
+# metric funkce SquaredDifference
+#------------------------------------------------------------------------
+#----------------------------------------------------------------------------------
+#Tridy metrickych funkci root_mean_squared_error, mse, mae, squared_difference
+#----------------------------------------------------------------------------------
+class root_mean_squared_error():
+
+    def __new__(self, y_true, y_pred):
+        self.y_true = y_true;
+        self.y_pred = y_pred;
+        return K.sqrt(K.mean(K.square(y_pred - y_true)));
+    
+class mean_squared_error():
+    
+    def __new__(self, y_true, y_pred):
+        self.y_true = y_true;
+        self.y_pred = y_pred;
+        return K.mean(K.square(y_pred - y_true)) + K.max(K.abs(y_pred - y_true),axis=-1);
+
+class mean_absolute_error():
+
+    def __new__(self, y_true, y_pred):
+        self.y_true = y_true;
+        self.y_pred = y_pred;
+        return K.max(K.abs(self.y_pred - self.y_true), axis=-1);
+        
+class squared_difference():
+    
+    def __new__(self, y_true, y_pred):
+        squared_difference = tf.square(y_true - y_pred)
+        return tf.reduce_mean(squared_difference, axis=-1);  # Note the `axis=-1`
+
+
+#------------------------------------------------------------------------
+# Neuronova Vrstava -vnitrni neuronova vrstva
+#------------------------------------------------------------------------
+class InnerNeuronLayerLSTM():
+    #definice datoveho ramce
+
+    def __init__(self, logger, actf, dropout_filter, rate):
+    
+        self.logger         = logger;
+        self.actf           = actf;
+        self.dropout_filter = dropout_filter;
+        self.rate           = rate;
+    
+
+#------------------------------------------------------------------------
+# inner layer
+# volano z neuralNetworkLSTMtrain 
+#------------------------------------------------------------------------
+    def innerLayer(self, neural_model, model, units, layers_count, initializer):
+        
+        for i in range(layers_count):
+                    
+            if "DENSE" in model:
+                self.logger.debug(model);
+                neural_model.add(layers.Dense(units= int(units),
+                                        activation=self.actf,
+                                        kernel_initializer=initializer,
+                                        bias_initializer="zeros"
+                )
+            );
+
+            if "LSTM" in model:
+                self.logger.debug(model);
+                neural_model.add(layers.LSTM(units = int(units), # self.units / 4
+                                        activation=self.actf,
+                                        recurrent_activation="sigmoid",
+                                        use_bias=True,
+                                        kernel_initializer=initializer,
+                                        recurrent_initializer="orthogonal",
+                                        bias_initializer="zeros",
+                                        unit_forget_bias=True,
+                                        return_sequences=True
+                )
+            );
+
+            if "GRU" in model:
+                self.logger.debug(model);
+                neural_model.add(layers.GRU(units = int(units), # self.units / 4
+                                        activation=self.actf,
+                                        recurrent_activation="sigmoid",
+                                        use_bias=True,
+                                        kernel_initializer=initializer,
+                                        recurrent_initializer="orthogonal",
+                                        bias_initializer='zeros',
+                                        return_sequences=True
+                )
+            );
+                
+            if "CONV1D" in model:
+                self.logger.debug(model);
+                neural_model.add(layers.Conv1D(filters=16,     # filters=32 
+                                        kernel_size=2,         # kernel_size=4
+                                        padding="same",
+                                        activation=self.actf,  # relu
+                                        use_bias=True,
+                                        kernel_initializer=initializer,
+                                        bias_initializer="zeros"
+                )
+            );
+
+            if self.dropout_filter:    
+                neural_model.add(Dropout(rate=self.rate, noise_shape=None, seed=None));
+
+        #end-for
+
+        return(neural_model);
+     
 #------------------------------------------------------------------------
 # Neuronova Vrstava -obecna neuronova vrstva
 #------------------------------------------------------------------------
@@ -1495,25 +1631,72 @@ class NeuronLayerLSTM():
         self.debug_mode     = debug_mode;
         self.current_date   = current_date,
         self.data           = None;
-        self.x_train_scaler = None;
-        self.y_train_scaler = None;
-        self.x_valid_scaler = None;
-        self.y_valid_scaler = None;
+        self.x_scaler = None;
+        self.y_scaler = None;
         self.neural_model   = None;
         self.ip_yesno       = ip_yesno;
         self.lrn_rate       = lrn_rate;
-
-        
-        #parametry window-size
-        self.windowX        = 24;  #min 1, max 64
-        #parametry window-size
-        self.windowY        = 1;  # musi byt 1
-        #parametry time-observe...
-        self.n_in           = 3;
-        self.n_out          = 3;
+        self.modelname      = "./models/checkpoint";
 
 #------------------------------------------------------------------------
-# toTensorLSTM(self, dataset, window = 16):
+#  POZOR! u siti typu LSTM a GRU musi byt self.windowX a
+#  self.windowY min 1!!!!  site GRU a LSTM predpokladaji 3D tenzor
+#------------------------------------------------------------------------
+        
+        #parametry window-size
+        self.windowX        =  4; #min 0, max 64
+        #parametry window-size
+        self.windowY        =  4; #min 0, max 64
+        #parametry time-observe...
+        self.n_in           =  3; #min 0, max 6
+        self.n_out          =  3; #min 0, max 6
+
+#------------------------------------------------------------------------
+# myFloatFormat         
+#------------------------------------------------------------------------
+    def myFloatFormat(self, x):
+        return ('%.6f' % x).rstrip('0').rstrip('.');
+
+#------------------------------------------------------------------------
+# myIntFormat         
+#------------------------------------------------------------------------
+    def myIntFormat(self, x):
+        return ('%.f' % x).rstrip('.');
+
+#------------------------------------------------------------------------
+# prepJitter,  setJitter
+#------------------------------------------------------------------------
+#    v pripade ze se v prubehu cteciho cykluz OPC zadna data nemeni 
+#    pridame jim umele trochu sumu, ktery nezhorsi presnost ale umozni
+#    neuronove siti presnejsi predikci. Sit se prilis nedokaze vyrovnat 
+#    s konstantnim prubehem datove sady.
+#------------------------------------------------------------------------
+    def prepJitter(self, df_size):
+        
+        jitter = np.random.normal(0, 0.0005, df_size);
+        for i in range(len(jitter)):
+            jitter[i] = self.myFloatFormat(jitter[i]);
+        return jitter;    
+        #return(pd.DataFrame(jitter, columns=["jitter"]));
+
+#------------------------------------------------------------------------
+# addJitter,  addJitter
+#------------------------------------------------------------------------
+    def addJitter(self, df, df_cols, jitter_=False):
+        
+        if not jitter_:
+            return(df);
+        
+        df_size = len(df);
+        
+        for col in df.head():
+            if  col in df_cols and ptypes.is_numeric_dtype(df[col]):
+                jitter = self.prepJitter(df_size);
+                df[col].apply(lambda x: np.asarray(x) + np.asarray(jitter));
+        return(df);
+        
+#------------------------------------------------------------------------
+# toTensoLSTM(self, dataset, window = 16):
 #------------------------------------------------------------------------
 # Pracujeme - li s rekurentnimi sitemi (LSTM GRU...), pak 
 # musíme vygenerovat dataset ve specifickém formátu.
@@ -1548,36 +1731,38 @@ class NeuronLayerLSTM():
         dataset_rows, dataset_cols = dataset.shape;
 
         if window == 0:
-            window = 1;
+            return( NeuronLayerLSTM.DataSet(dataset, None, dataset_cols));
         
         if window >= dataset_rows:
-            self.logger.error("prilis maly  vektor dat k uceni!!! \nparametr window je vetsi nez delka vst. vektoru ");
-            return(None);
+            self.logger.error("parametr window je vetsi nez delka vst. vektoru ");
+            return NeuronLayerLSTM.DataSet(dataset, None, dataset_cols);
         
         for i in range(window, dataset_rows):
             X_dataset.append(dataset[i - window : i, ]);
             y_dataset.append(dataset[i, ]);
         
-        #doplnek pro append chybejicich window vzorku pri predikci
-        X_dataset.append(dataset[0 : window, ]);
-            
         X_dataset = np.array(X_dataset);
         y_dataset = np.array(y_dataset);
-        
+
         X_dataset = np.reshape(X_dataset, (X_dataset.shape[0], X_dataset.shape[1], dataset_cols));
         
         return NeuronLayerLSTM.DataSet(X_dataset, y_dataset, dataset_cols);
 
 #------------------------------------------------------------------------
-# fromTensorLSTMMean(self, dataset, window = 64):
+# fromTensorLSTM(self, dataset, window = 64):
 #------------------------------------------------------------------------
 # Udelej mean nad window
 # funkce vraci: y_result - 2D array vysledku predikce
 #
 #------------------------------------------------------------------------
-    def fromTensorLSTMMean(self, dataset, dropNaN=True):
+    def fromTensorLSTM(self, dataset, window):
+
+        if window == 0:
+            return (dataset);
+        
         df = pd.DataFrame(np.mean(dataset, axis=1));
-        df = df.iloc[ : -self.windowX, :];
+        df = df.iloc[ : -window, :];
+        
         if len(df) == 0:
             return(None);
         return(df);
@@ -1635,7 +1820,7 @@ class NeuronLayerLSTM():
 #    dropNaN..: drop NaN ?
 #    df.groupby(np.arange(len(df.columns))//3, axis=1).mean()
 #------------------------------------------------------------------------
-    def fromTimeSeriesMean (self, array, colnames, n_in=3, n_out=3, dropNaN=True):
+    def fromTimeSeries (self, array, colnames, n_in=3, n_out=3, dropNaN=True):
 
         n = n_in + n_out;
         if n <= 1:
@@ -1651,87 +1836,38 @@ class NeuronLayerLSTM():
         for col in colnames:
             df_mean[col] =  df.iloc[:,icnt::icol].mean(axis=1);
             icnt += 1;
-
-        # zvetsi o ztracene radky na velikost self.batch
-
-        #df_len = df_mean.shape[0];
-        #loss   = self.batch - df_len;
-        #df_loss = df.iloc[(df_len - loss)  : df_len, :];
-        #frames = [df_mean, df_loss];
-        #result = pd.concat(frames);
         
         return(df_mean);
-
+    
 #------------------------------------------------------------------------
-# smoothGraph - trochu vyhlad graf
+# Neuronova Vrstva - definice 
 #------------------------------------------------------------------------
-    def smoothGraph(self, points, factor=0.9):
-        smoothed_points = [];
-        
-        for point in points:
-            if smoothed_points:
-                previous = smoothed_points[-1];
-                smoothed_points.append(previous * factor + point * (1 - factor));
-            else:
-                smoothed_points.append(point);
-                
-        return smoothed_points;        
+    def loadModel(self, modelname):
 
+        model = tf.keras.models.load_model(modelname,
+                #custom_objects= {"root_mean_squared_error": root_mean_squared_error},
+                custom_objects= {"mean_squared_error": mean_squared_error},
+                compile       = True,
+                options       = None
+        );
+        
+        return model;
+    
+#------------------------------------------------------------------------
+# Neuronova Vrstva - definice 
+#------------------------------------------------------------------------
+    def saveModel(self, neural_model, modelname):
+        
+        neural_model.save(modelname,
+                          overwrite=True,
+                          include_optimizer=True,
+                          save_format="h5");
 
-#------------------------------------------------------------------------    
-# printTrainGraph - tisk optimalizacnich grafu (jen v debug modu)
-#------------------------------------------------------------------------    
-    def printTrainGraph (self, history):
-        
-        #kolik se vynecha o zacatku v grafu?
-        start_point = 0;
-        
-        loss_train = history.history['loss'];
-        loss_train = self.smoothGraph(points = loss_train[start_point:], factor = 0.9)
-        loss_val = history.history['val_loss'];
-        loss_val = self.smoothGraph(points = loss_val[start_point:], factor =  0.9)
-        epochs = range(0,len(loss_train));
-        
-        # disable GUI: pokud bezi ve vlaknu bez GUI - vyvola vyjimku
-        plt.switch_backend('agg')
-        plt.clf();
-        plt.plot(epochs, loss_train, label='LOSS treninku');
-        plt.plot(epochs, loss_val,   label='LOSS validace');
-        plt.title('LOSS treninku');
-        plt.xlabel('Pocet epoch');
-        plt.ylabel('LOSS');
-        plt.legend();
-        plt.savefig(self.path_to_result+'/graf_loss.pdf', format='pdf');
-        plt.clf();
-        
-        acc_train =  history.history['acc'];
-        acc_train = self.smoothGraph(points=acc_train[start_point:], factor = 0.9)
-        acc_val = history.history['val_acc'];
-        acc_val = self.smoothGraph(points=acc_val[start_point:], factor = 0.9)
-        epochs = range(0,len(acc_train));
-        # disable GUI: pokud bezi ve vlaknu bez GUI - vyvola vyjimku
-        plt.switch_backend('agg')
-        plt.clf();
-        plt.plot(epochs, acc_train, label='ACC treninku');
-        plt.plot(epochs, acc_val, label='ACC validace');
-        plt.title('ACC treninku');
-        plt.xlabel('Pocet epoch');
-        plt.ylabel('ACC');
-        plt.legend();
-        plt.savefig(self.path_to_result+'/graf_acc.pdf', format='pdf');
-        plt.clf();
-
+        return modelname;
 
 
 #------------------------------------------------------------------------
-# Definice neuronove vrstvy
-# -  definice DropOut filtru - konstanta rate
-# -  definice prvni skryte vrstvy
-# -  definice druhe skryte vrstvy, je li layers_count_2 == 0, druha vrstva
-#    se preskakuje
-#
-#    Dve skryte vrstvy jsou definovany proto, aby bylo mozno kombinovat
-#    ruzne typy neuronovych siti (DENSE, CONV1D, LSTM, GRU)
+# Neuronova Vrstva - definice 
 #------------------------------------------------------------------------
     def neuralNetworkLSTMtrain(self, DataTrain, thread_name):
 
@@ -1749,224 +1885,179 @@ class NeuronLayerLSTM():
         # ladici parametry
         layers_count_1 =  self.layers_1;       # pocet vrstev v hidden
         layers_count_2 =  self.layers_2;
-        
-        dropout_filter = True;                # Dropout
-        rate           =  0.15;               # a jeho rate....
-        
+        dropout_filter =  True;                # Dropout
+        rate           =  0.1;                 # a jeho rate....
+
+        inner_layer    =  InnerNeuronLayerLSTM(self.logger, self.actf, dropout_filter, rate);
+
         try:
-            y_train_data = np.array(self.toTimeSeries(DataTrain.train[DataTrain.df_parm_y], n_in, n_out));
-            x_train_data = np.array(self.toTimeSeries(DataTrain.train[DataTrain.df_parm_x], n_in, n_out));
-            y_valid_data = np.array(self.toTimeSeries(DataTrain.valid[DataTrain.df_parm_y], n_in, n_out));
-            x_valid_data = np.array(self.toTimeSeries(DataTrain.valid[DataTrain.df_parm_x], n_in, n_out));
+            # df_parmY_train
+            y_train      = DataTrain.train[DataTrain.df_parmY];
+            y_train      = pd.concat([y_train, self.addJitter(y_train, DataTrain.df_parmY, False)]);
+            y_train_data = np.array(self.toTimeSeries(y_train, n_in, n_out));
             
+            # df_parmY_valid
+            y_valid      = DataTrain.valid[DataTrain.df_parmY];
+            y_valid      = pd.concat([y_valid, self.addJitter(y_valid, DataTrain.df_parmY, False)]);
+            y_valid_data = np.array(self.toTimeSeries(y_valid, n_in, n_out));
+            
+            # df_parmx_train
+            x_train      = DataTrain.train[DataTrain.df_parmx];
+            x_train      = pd.concat([x_train, self.addJitter(x_train, DataTrain.df_parmx, True)]);
+            x_train_data = np.array(self.toTimeSeries(x_train, n_in, n_out));
+            
+            # df_parmx_valid
+            x_valid      = DataTrain.valid[DataTrain.df_parmx];
+            x_valid      = pd.concat([x_valid, self.addJitter(x_valid, DataTrain.df_parmx, False)]);
+            x_valid_data = np.array(self.toTimeSeries(x_valid, n_in, n_out));
+
             if (x_train_data.size == 0 or y_train_data.size == 0):
                 return();
-            
 
-            inp_size   = x_train_data[0].size;
-            out_size   = y_train_data[0].size;
-            v_inp_size = x_train_data[0].shape[0];
-            v_out_size = y_train_data[0].shape[0];
-
+        # Scaler pro X  
+            self.x_scaler = StandardScaler(); #MinMaxScaler(feature_range=(0, 1));
+            self.x_scaler.fit(x_train_data);
+            x_train_data = self.x_scaler.transform(x_train_data);
+            x_valid_data = self.x_scaler.transform(x_valid_data);
             
-        # normalizace dat k uceni a vstupnich treninkovych dat 
-            self.x_train_scaler = MinMaxScaler(feature_range=(0, 1))
-            x_train_data = self.x_train_scaler.fit_transform(x_train_data)
-            pickle.dump(self.x_train_scaler, open("./temp/x_train_scaler"+thread_name+".pkl", 'wb'))
-            
-            self.y_train_scaler = MinMaxScaler(feature_range=(0, 1))
-            y_train_data = self.y_train_scaler.fit_transform(y_train_data)
-            pickle.dump(self.y_train_scaler, open("./temp/y_train_scaler"+thread_name+".pkl", 'wb'))
-            
-        # normalizace dat k uceni a vstupnich treninkovych dat 
-            self.x_valid_scaler = MinMaxScaler(feature_range=(0, 1))
-            x_valid_data = self.x_valid_scaler.fit_transform(x_valid_data)
-            pickle.dump(self.x_train_scaler, open("./temp/x_valid_scaler"+thread_name+".pkl", 'wb'))
-            
-            self.y_valid_scaler = MinMaxScaler(feature_range=(0, 1))
-            y_valid_data = self.y_valid_scaler.fit_transform(y_valid_data)
-            pickle.dump(self.y_train_scaler, open("./temp/y_valid_scaler"+thread_name+".pkl", 'wb'))
-        
-        #data pro trenink -3D tenzor
-            X_train =  self.toTensorLSTM(x_train_data, window=window_X);
-        #vstupni data train 
-            Y_train = self.toTensorLSTM(y_train_data, window=window_Y);
-            Y_train.X_dataset = Y_train.X_dataset[0 : X_train.X_dataset.shape[0]];
-        #data pro validaci -3D tenzor
+            X_train = self.toTensorLSTM(x_train_data, window=window_X);
             X_valid = self.toTensorLSTM(x_valid_data, window=window_X);
-        #vxsystupni data pro trenink -3D tenzor
+        
+        # Scaler pro Y  
+            self.y_scaler = StandardScaler(); #MinMaxScaler(feature_range=(0, 1));
+            self.y_scaler.fit(y_train_data);
+            y_train_data = self.y_scaler.transform(y_train_data);
+            y_valid_data = self.y_scaler.transform(y_valid_data);
+
+            Y_train = self.toTensorLSTM(y_train_data, window=window_Y);
             Y_valid = self.toTensorLSTM(y_valid_data, window=window_Y);
-            Y_valid.X_dataset = Y_valid.X_dataset[0 : X_valid.X_dataset.shape[0]];
             
 #------------------------------------------------------------------------    
 # Input layer    
-#------------------------------------------------------------------------    
-            neural_model = Sequential();
+#------------------------------------------------------------------------
+            neural_model = tf.keras.Sequential();
             initializer  = tf.keras.initializers.RandomUniform(minval=-0.05, maxval=0.05, seed=None)
-            neural_model.add(Input(shape=(X_train.X_dataset.shape[1], X_train.cols,)));
-            #pridana vstupni vrstva Dense -> lepsi vysledky RMSE
-            neural_model.add(layers.Dense(units= int(X_train.X_dataset.shape[1])));
+  
+            # 2D tenzor
+            if X_train.X_dataset.ndim == 2:
+                x_dim, y_dim = X_train.X_dataset.shape;
+                neural_model.add(Input(shape=(y_dim)));
+                neural_model.add(layers.Dense(units=(y_dim),
+                                              activation="linear",
+                                              kernel_initializer=initializer
+                                             )
+                                 );
+
+            # 3D tenzor
+            else:
+                x_dim, y_dim, z_dim = X_train.X_dataset.shape;
+                neural_model.add(Input(shape=(y_dim, z_dim)));
+                neural_model.add(layers.Dense(units=(y_dim * z_dim),
+                                              activation="linear",
+                                              kernel_initializer=initializer
+                                              )
+                                 );
 
 #------------------------------------------------------------------------    
 # Hidden layer - begin DENSE, LSTM, GRU, CONV1D
-# Vrstva 1
 #------------------------------------------------------------------------
-            for i in range(layers_count_1):
-                    
-                if "DENSE" in model_1:
-                    self.logger.debug(model_1);
-                    neural_model.add(layers.Dense(units= int(units_1),
-                                              activation=self.actf,
-                                              kernel_initializer=initializer,
-                                              bias_initializer="zeros"
-                    )
-                );
+            # 1. hidden  
+            if units_1 > 0 and layers_count_1 > 0 and model_1 != "": 
+                neural_model = inner_layer.innerLayer(
+                                          neural_model = neural_model,
+                                          model        = model_1,
+                                          units        = units_1,
+                                          layers_count = layers_count_1,
+                                          initializer  = initializer
 
-                if "LSTM" in model_1:
-                    self.logger.debug(model_1);
-                    neural_model.add(layers.LSTM(units = int(units_1), # self.units / 4
-                                             activation=self.actf,
-                                             recurrent_activation="sigmoid",
-                                             use_bias=True,
-                                             # kernel_initializer=initializer,
-                                             kernel_initializer="glorot_uniform",
-                                             recurrent_initializer="orthogonal",
-                                             bias_initializer="zeros",
-                                             unit_forget_bias=True,
-                                             return_sequences=True
-                    )
-                );
+                             );
+                
+            # 2. hidden  
+            if units_2 > 0 and layers_count_2 > 0 and model_2 != "": 
+                neural_model = inner_layer.innerLayer(
+                                          neural_model = neural_model,
+                                          model        = model_2,
+                                          units        = units_2,
+                                          layers_count = layers_count_2,
+                                          initializer  = initializer
+                             );
 
-                if "GRU" in model_1:
-                    self.logger.debug(model_1);
-                    neural_model.add(layers.GRU(units = int(units_1), # self.units / 4
-                                            activation=self.actf,
-                                            recurrent_activation="sigmoid",
-                                            use_bias=True,
-                                            # kernel_initializer=initializer,
-                                            kernel_initializer="glorot_uniform",
-                                            recurrent_initializer="orthogonal",
-                                            bias_initializer='zeros',
-                                            return_sequences=True
-                    )
-                );
-                    
-                if "CONV1D" in model_1:
-                    self.logger.debug(model_1);
-                    neural_model.add(layers.Conv1D(filters=16,       # filters=32 
-                                               kernel_size=2,    # kernel_size=4
-                                               padding="same",
-                                               activation="relu",# relu
-                                               use_bias=True,
-                                               kernel_initializer="glorot_uniform",
-                                               bias_initializer="zeros"
-                    )
-                );
-
-                if dropout_filter:    
-                    neural_model.add(Dropout(rate=rate, noise_shape=None, seed=None));
-
-            #end-for
-
-#------------------------------------------------------------------------    
-# Hidden layer - begin DENSE, LSTM, GRU, CONV1D
-# Vrstva 2
-#------------------------------------------------------------------------    
-            for i in range(layers_count_2):
-                    
-                if "DENSE" in model_2:
-                    self.logger.debug(model_2);
-                    neural_model.add(layers.Dense(units= int(units_2),
-                                              activation=self.actf,
-                                              kernel_initializer=initializer,
-                                              bias_initializer="zeros"
-                    )
-                );
-
-                if "LSTM" in model_2:
-                    self.logger.debug(model_2);
-                    neural_model.add(layers.LSTM(units = int(units_2), # self.units / 4
-                                             activation=self.actf,
-                                             recurrent_activation="sigmoid",
-                                             use_bias=True,
-                                             # kernel_initializer=initializer,
-                                             kernel_initializer="glorot_uniform",
-                                             recurrent_initializer="orthogonal",
-                                             bias_initializer="zeros",
-                                             unit_forget_bias=True,
-                                             return_sequences=True
-                    )
-                );
-
-                if "GRU" in model_2:
-                    self.logger.debug(model_2);
-                    neural_model.add(layers.GRU(units = int(units_2), # self.units / 4
-                                            activation=self.actf,
-                                            recurrent_activation="sigmoid",
-                                            use_bias=True,
-                                            # kernel_initializer=initializer,
-                                            kernel_initializer="glorot_uniform",
-                                            recurrent_initializer="orthogonal",
-                                            bias_initializer='zeros',
-                                            return_sequences=True
-                    )
-                );
-                    
-                if "CONV1D" in model_2:
-                    self.logger.debug(model_2);
-                    neural_model.add(layers.Conv1D(filters=16,       # filters=32 
-                                               kernel_size=2,    # kernel_size=4
-                                               padding="same",
-                                               activation="relu",# relu
-                                               use_bias=True,
-                                               kernel_initializer="glorot_uniform",
-                                               bias_initializer="zeros"
-                    )
-                );
-
-                if dropout_filter:    
-                    neural_model.add(Dropout(rate=rate, noise_shape=None, seed=None));
-
-            #end-for
-
-#------------------------------------------------------------------------
-# Hidden layer - end
-#------------------------------------------------------------------------    
-                    
 #------------------------------------------------------------------------    
 # Output layer
 #------------------------------------------------------------------------    
         
-            neural_model.add(layers.Dense(Y_train.cols, activation="relu"));
+            neural_model.add(layers.Dense(Y_train.cols,
+                                          activation="linear",
+                                          kernel_initializer=initializer
+                                         )
+                             );
 
-            optimizer = tf.keras.optimizers.Adam(learning_rate = 0.0003,
-                                                  beta_1       = 0.9,
-                                                  beta_2       = 0.999,
-                                                  epsilon      = 1e-07
-                                            );
+#------------------------------------------------------------------------    
+# Compile layer    
+#------------------------------------------------------------------------    
+            lr = tf.keras.optimizers.schedules.ExponentialDecay(
+                                          self.lrn_rate,
+                                          decay_steps = 9500,
+                                          decay_rate  = 0.4,
+                                          staircase   = False
+                             );
 
+            optimizer = tf.keras.optimizers.Adam(learning_rate = lr);
+            rmse      = tf.keras.metrics.RootMeanSquaredError();
+            
+            neural_model.compile(
+                                          optimizer = optimizer,
+                                          loss      = [mean_squared_error],
+                                          metrics   = [root_mean_squared_error],
+                             );
 
-        # definice ztratove funkce a optimalizacniho algoritmu
-            neural_model.compile(loss='mse', optimizer=optimizer, metrics=["mse", "acc"]);
         # natrenuj neural_model na vstupni dataset
-            history = neural_model.fit(X_train.X_dataset, 
-                                       Y_train.X_dataset, 
-                                       epochs         =self.epochs, 
-                                       batch_size     =self.batch, 
-                                       verbose        =2,
-                                       shuffle        =self.shuffling,
-                                       validation_data=(X_valid.X_dataset, Y_valid.X_dataset)
-                            );
 
-        # zapis neural_modelu    
-            neural_model.save("./models/model_"+thread_name+"_"+DataTrain.axis, overwrite=True, include_optimizer=True);
+#------------------------------------------------------------------------    
+# Fit layer         
+#------------------------------------------------------------------------    
+            early_stopping   = tf.keras.callbacks.EarlyStopping(
+                                          monitor        = "val_root_mean_squared_error",
+                                          patience       = 15,
+                                          verbose        =  1,
+                             );
 
-            if self.debug_mode is True:
-                neural_model.summary();
-                self.printTrainGraph(history);
-                
+        # save model
+
+            save_best = tf.keras.callbacks.ModelCheckpoint(
+                                          filepath       = self.modelname,
+                                          save_best_only = True,
+                                          save_weights_only = True,
+                                          monitor        = "val_loss",
+                                          mode           = "min"
+                             );
+
+            self.logger.info("Trenink start...");
+            startTime = int(time.time());
+            
+            history = neural_model.fit(
+                                          X_train.X_dataset, Y_train.X_dataset, 
+                                          validation_data = (X_valid.X_dataset, Y_valid.X_dataset),
+                                          epochs         = self.epochs, 
+                                          batch_size     = self.batch, 
+                                          verbose        = 0,
+                                          callbacks      = [save_best, early_stopping],
+                                          shuffle        = self.shuffling,
+                                          use_multiprocessing = True
+                             );
+            
+            stopTime = int(time.time());
+            self.logger.info("Trenink stop, %d[s]..." % int(stopTime - startTime));
+
+
+            # load model - nejlepsi RMSE
+            #neural_model = self.loadModel(self.modelname);
+            neural_model.load_weights(self.modelname);
+            neural_model.summary();
+
             self.neural_model = neural_model;
-            return ();
+            
+            return;
         
         except Exception as ex:
             self.logger.error(traceback.print_exc());
@@ -1979,13 +2070,12 @@ class NeuronLayerLSTM():
         
         n_in  = self.n_in;
         n_out = self.n_out;
-        
+
         try:
             axis     = DataTrain.axis;  
-            #x_test   = np.array(DataTrain.test[DataTrain.df_parm_x]);
-            #y_test   = np.array(DataTrain.test[DataTrain.df_parm_y]);
-            x_test   = np.array(self.toTimeSeries(DataTrain.test[DataTrain.df_parm_x], n_in, n_out));
-            y_test   = np.array(self.toTimeSeries(DataTrain.test[DataTrain.df_parm_y], n_in, n_out));
+            x_test   = np.array(self.toTimeSeries(DataTrain.test[DataTrain.df_parmx], n_in, n_out));
+            y_test   = np.array(self.toTimeSeries(DataTrain.test[DataTrain.df_parmY], n_in, n_out));
+
 
             if x_test.shape[0] == 0:
                 return(None);
@@ -1993,32 +2083,24 @@ class NeuronLayerLSTM():
             if y_test.shape[0] == 0:
                 return(None);
             
-            self.x_train_scaler =  pickle.load(open("./temp/x_valid_scaler"+thread_name+".pkl", 'rb'))
-            self.y_train_scaler =  pickle.load(open("./temp/y_valid_scaler"+thread_name+".pkl", 'rb'))
-            
-            x_test        = self.x_train_scaler.transform(x_test);
-            
-            x_object      = self.toTensorLSTM(x_test, window=self.windowX);
-            dataset_rows, dataset_cols = x_test.shape;
-        # predict
-            y_result      = self.neural_model.predict(x_object.X_dataset);
-        
+            x_test        = self.x_scaler.transform(x_test);
+            X_test        = self.toTensorLSTM(x_test, window=self.windowX);
+#------------------------------------------------------------------------    
+# Predict         
+#------------------------------------------------------------------------    
+            y_result      = self.neural_model.predict(X_test.X_dataset);
         # reshape 3d na 2d  
-            z_result      = self.fromTensorLSTMMean(y_result);
+            y_result      = self.fromTensorLSTM(y_result, self.windowY);
+            y_result      = self.y_scaler.inverse_transform(y_result);
             
-        # if z_result == NOne -> len(df) == 0;    
-            if z_result is None:
-                return DataFactory.DataResult(x_test, y_test, y_result, axis)
+            if y_result is None:
+                return DataFactory.DataResult(x_test, y_test, y_result, axis);
             
-            y_result      = self.y_train_scaler.inverse_transform(z_result);
+            x_test   = self.fromTimeSeries(x_test, DataTrain.df_parmx, n_in, n_out);
+            y_test   = self.fromTimeSeries(y_test, DataTrain.df_parmY, n_in, n_out);
+            y_result = self.fromTimeSeries(y_result, DataTrain.df_parmY, n_in, n_out);
 
-            x_test   = self.fromTimeSeriesMean(x_test, DataTrain.df_parm_x, n_in, n_out);
-            y_test   = self.fromTimeSeriesMean(y_test, DataTrain.df_parm_y, n_in, n_out);
-            y_result = self.fromTimeSeriesMean(y_result, DataTrain.df_parm_y, n_in, n_out);
-        # plot grafu compare...
-            #model.summary()
-
-            return DataFactory.DataResult(x_test, y_test, y_result, axis)
+            return DataFactory.DataResult(x_test, y_test, y_result, axis);
 
         except Exception as ex:
             self.logger.error("POZOR !!! patrne se neshoduji predkladana data s natrenovanym modelem");
@@ -2034,7 +2116,7 @@ class NeuronLayerLSTM():
         try:
             
             thread_name = threads_result[threads_cnt][1];
-            startTime = int(time.time_ns());
+            startTime = int(time.time());
 
             #nacti pouze predikcni data 
             self.logger.debug("Nacitam data pro predikci, v modu: "+ str(self.typ));
@@ -2067,9 +2149,9 @@ class NeuronLayerLSTM():
 
             if self.data.DataResultDim.DataResultX is None:
                 return();
-            
-            col_names_y = list(self.data.DataTrain.df_parm_y);
-            threads_result[threads_cnt][0]  =  pd.DataFrame(self.data.DataResultDim.DataResultX.y_result, columns = col_names_y);
+
+            col_names_Y = list(self.data.DataTrain.df_parmY);
+            threads_result[threads_cnt][0] = pd.DataFrame(self.data.DataResultDim.DataResultX.y_result, columns = col_names_Y);
             
             if self.data.saveDataToPLC(threads_result,
                                        self.txdat1,
@@ -2082,8 +2164,8 @@ class NeuronLayerLSTM():
                 pass;
 
             
-            stopTime = int(time.time_ns());
-            self.logger.info ("Thread- %s, predict: %d [ms] " %(thread_name, int((stopTime - startTime)/1000000)));
+            stopTime = int(time.time());
+            self.logger.debug("Thread- %s, predict: %d [s] " %(thread_name, int(stopTime - startTime)));
 
             return();
 
@@ -2137,7 +2219,7 @@ class NeuronLayerLSTM():
 
 
 #------------------------------------------------------------------------
-# Definice tridy NeuroDaemon
+# Daemon    
 #------------------------------------------------------------------------
 class NeuroDaemon():
     
@@ -2226,6 +2308,9 @@ class NeuroDaemon():
 # file handlery pro file_preserve
 #------------------------------------------------------------------------
     def getLogFileHandlers(self, logger):
+        """ Get a list of filehandle numbers from logger
+            to be handed to DaemonContext.files_preserve
+        """
 
         i = 0;
         handlers = [];
@@ -2273,19 +2358,14 @@ class NeuroDaemon():
         
         subject = "ai-daemon";
         if plc_isRunning:
-            msg0 = "ai-daemon v rezimu run (stroj je zapnut)...\n";
-            msg1 = "start v modu: train, cas:"+str(current_time)+"\n";
-            msg2 = "treninkova mnozina, timestamp start :"+txdat1+"\n";
-            msg3 = "                    timestamp stop  :"+txdat2+"\n";
+            msg0 = "ai-daemon v rezimu run (stroj je zapnut)...";
         else:    
-            msg0 = "ai-daemon v rezimu sleep (stroj je vypnut)...\n";
-            msg1 = "start v modu: train, cas:"+str(current_time)+"\n";
-            msg2 = "treninkova mnozina, timestamp start :"+txdat1+"\n";
-            msg3 = "                    timestamp stop  :"+txdat2+"\n";
+            msg0 = "ai-daemon v rezimu sleep (stroj je vypnut)...";
+            
+        msg1 = "start v modu: train, cas:"+str(current_time);
 
-        msg = msg0+msg1+msg2+msg3 ;
-        self.logger.info(msg);
-        #webbrowser.open("mailto:?to="+ recipient + "&subject=" + subject + "&body=" + msg, new=1);
+        self.logger.info(msg0);
+        self.logger.info(msg1);
         
 #------------------------------------------------------------------------
 # start daemon pro parametr LSTM, GRU, DENSE a CONV1D
@@ -2305,7 +2385,7 @@ class NeuroDaemon():
         self.printParms(self.debug_mode);
         
         if threads_cnt > 0:
-            epochs   = epochs  + 1;
+            epochs   = epochs + 1;
             units_1  = units_1 + 1;
             units_2  = units_2 - 1;
 
@@ -2814,7 +2894,8 @@ def exception_handler(exctype, value, tb):
 # Signal handler
 #------------------------------------------------------------------------
 def signal_handler(self, signal, frame):
-    #Catch Ctrl-C and Exit
+    print("Catch Ctrl-C and Exit:");
+    signal.pause();
     sys.exit(1);
 
 #------------------------------------------------------------------------
@@ -2899,8 +2980,6 @@ def help (activations):
     print(" ");
     print(" ");
     print("Parametry treninkove a predikcni mnoziny jsou v ./cfg/ai-parms.cfg.");
-    print("Pozor!!! Parametry v treninkovem tenzoru (df_parm_X) se musi(!) ");
-    print("v casti teplot, shodovat s parametry k predikci (df_parm_x).  ");
     print(" ");
     print("Syntaxe v ai-parms.cfg je nasledujici: ");
     print("#--------------------------------------------------------------------------------------------");
@@ -2910,7 +2989,7 @@ def help (activations):
     print("#--------------------------------------------------------------------------------------------");
     print("#Tenzor predlozeny k treninku                                                                ");
     print("#--------------------------------------------------------------------------------------------");
-    print("df_parmX = dev_y4, dev_z4, temp_lo03, temp_st02, temp_st06, temp_st07, temp_S1, temp_vr05,...");
+    print("df_parmY = dev_y4, dev_z4, temp_lo03, temp_st02, temp_st06, temp_st07, temp_S1, temp_vr05,...");
     print("POZOR!!! nazvy promennych se MUSI shodovat s hlavickovymi nazvy vstupniho datoveho CSV souboru");
     print(" ");
     print("(C) GNU General Public License, autor Petr Lukasik , 2022 ");
@@ -3188,15 +3267,15 @@ def main(argv):
                 
             elif opt in ("-e", "--epochs"):
                 try:
-                    r = range(16-1, 256+1);
+                    r = range(16-1, 512+1);
                     epochs = int(arg);
                     if epochs not in r:
-                        print("Err: 'epochs' in <16, 256>");
+                        print("Err: 'epochs' in <16, 512>");
                         help(activations);
                         sys.exit(1)    
                         
                 except:
-                    print("Chyba: parametr 'epochs' musi byt integer v rozsahu <16, 128>");
+                    print("Chyba: parametr 'epochs' musi byt integer v rozsahu <16, 512>");
                     help(activations);
                     sys.exit(1);
                         
@@ -3330,7 +3409,7 @@ def main(argv):
          
             elif opt in ["-lr","--lrnrate"]:
                 try:
-                    r = range(1, 21);
+                    r = range(1, 201);
                     lrn_rate  = float(arg);
                     lrn_ratemult = int(lrn_rate*10000);
         
