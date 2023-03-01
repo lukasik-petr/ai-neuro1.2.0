@@ -2108,7 +2108,9 @@ class NeuronLayerLSTM():
             self.logger.error(traceback.print_exc());
 
 #------------------------------------------------------------------------
-# neuralNetworkLSTMexec - exec 
+# neuralNetworkLSTMexec - exec
+# return True - predict data nactena
+# return False - predict data nebyla nactena 
 #------------------------------------------------------------------------
     def neuralNetworkLSTMexec(self, threads_result, threads_cnt):
 
@@ -2142,13 +2144,13 @@ class NeuronLayerLSTM():
                     self.logger.info("Exit...");
                     sys.exit(1);
                 else:    
-                    return();
+                    return(False);
            
             
             self.data.DataResultDim.DataResultX = self.neuralNetworkLSTMpredict(self.data.DataTrainDim.DataTrain, thread_name);
 
             if self.data.DataResultDim.DataResultX is None:
-                return();
+                return(False);
 
             col_names_Y = list(self.data.DataTrain.df_parmY);
             threads_result[threads_cnt][0] = pd.DataFrame(self.data.DataResultDim.DataResultX.y_result, columns = col_names_Y);
@@ -2167,7 +2169,7 @@ class NeuronLayerLSTM():
             stopTime = int(time.time());
             self.logger.debug("Thread- %s, predict: %d [s] " %(thread_name, int(stopTime - startTime)));
 
-            return();
+            return(True);
 
         except FileNotFoundError as e:
             self.logger.error(f"Nenalezen model site, zkuste nejdrive spustit s parametem train !!!");    
@@ -2479,14 +2481,13 @@ class NeuroDaemon():
                 self.sendtoMSG(current_date, "plukasik@tajmac-zps.cz", txdat1, txdat2, plc_isRunning);
 
             if plc_isRunning and not self.debug_mode:
-                if neural.getTyp() == "train":
-                    self.logger.info("PLC ON:"+ current_date + " mode train, thread cnt: " + str(threads_cnt + 1)+"");
-                else:
-                    self.logger.info("PLC ON:"+ current_date + " mode predict, thread cnt: " + str(threads_cnt +1)+"");
+                self.logger.info("PLC ON:"+ current_date + str(threads_cnt + 1));
                     
-                neural.neuralNetworkLSTMexec(threads_result, threads_cnt);
+                if neural.neuralNetworkLSTMexec(threads_result, threads_cnt):
+                    sleep_interval =   0;         #  0 [s]
+                else:    
+                    sleep_interval = 600;         #600 [s] - predict data = null
                 neural.setTyp("predict");
-                sleep_interval =  0;         #  0 [s]
 
             if not plc_isRunning and not self.debug_mode:
                 self.logger.info("PLC OFF:"+ current_date+"");

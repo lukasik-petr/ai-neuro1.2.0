@@ -31,17 +31,17 @@ logfile=${LOGFILE-$FILE_PATH/log/ai-daemon.log}
 # implicitni parametry - mozno zmenit  z 'cmd lajny'
 #----------------------------------------------------------------------
 STATUS="run"        # run,start,....
-UNITS_1="79"        # LSTM=91, DENSE=79
-UNITS_2="0"         # LSTM=91, DENSE=79
+UNITS_1="330"       # GRU,LSTM=91, DENSE=330
+UNITS_2="0"         # GRU,LSTM=91, DENSE=330
 MODEL_1="DENSE"     # typ vrstvy_1 LSTM DENSE GRU CONV1D
-MODEL_2=""          # typ vrstvy_2 LSTM DENSE GRU CONV1D
+MODEL_2="GRU"       # typ vrstvy_2 LSTM DENSE GRU CONV1D
 EPOCHS="500"        # Poc. treninkovych cyklu
 LAYERS_1="2"        # pocet vrstev v prvni sekci
 LAYERS_2="0"        # pocet vrstev v druhe sekci
 BATCH="128"         # pocet vzorku do predikce
 DBMODE="True"       # implicitne v debug modu - nezapisuje do PLC
 INTERPOLATE="False" # TRUE FALSE -interpolace splinem
-LRNRATE="0.007"     # learning rate <0.0002, 0.002>
+LRNRATE="0.001"     # learning rate <0.0002, 0.002>
 RETVAL=0
 
 #----------------------------------------------------------------------

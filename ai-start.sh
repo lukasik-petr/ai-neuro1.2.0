@@ -7,17 +7,17 @@ export PATH=${CONDA_HOME}/bin:${PATH}
 export TF_ENABLE_ONEDNN_OPTS=0
 
 STATUS="start"               # start|run|stop|restart|force-reload|reload|status
-UNITS_1="96"                 # pocet neuronu v prvni sekci
-UNITS_2="96"                 # pocet neuronu v druhe sekci
+UNITS_1="230"                # pocet neuronu v prvni sekci
+UNITS_2="0"                  # pocet neuronu v druhe sekci
 MODEL_1="DENSE"              # typ site v prvni sekci
 MODEL_2="GRU"                # typ site v druhe sekci
-EPOCHS="48"                  # pocet epoch
+EPOCHS="500"                 # pocet epoch
 LAYERS_1="2"                 # pocet skrytych vrstev v prvni sekci
-LAYERS_2="1"                 # pocet skrytych vrstev v druhe sekci
+LAYERS_2="0"                 # pocet skrytych vrstev v druhe sekci
 BATCH="128"                  # pocet vzorku k predikci
 DBMODE="False"               # debug mode <debug=True, nodebug=False>
 INTERPOLATE="False"          # interpolace dat splinem
-LRNRATE="0.0005"             # learning rate <0.0002, 0.002>
+LRNRATE="0.001"              # learning rate <0.0002, 0.002>
 
 
 eval "$(conda shell.bash hook)"
