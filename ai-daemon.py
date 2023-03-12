@@ -1174,10 +1174,14 @@ class DataFactory():
         l_plc.append( str(utc_timestamp)[0:19]);
         l_plc_col.append("utc");
 
+        #prevod pro PLC (viz dokument Teplotni Kompenzace AI)
+        #  10 = 0.001
+        # 100 = 0.01 atd...
+        
         for col in col_names_Y:
             if "dev" in col:
-                mmean = self.myIntFormat(df_result[col].mean() *10000);   #prevod pro PLC (viz dokument Teplotni Kompenzace AI)
-                l_plc.append(mmean);                                  #  10 = 0.001 atd...
+                mmean = self.myIntFormat(df_result[col].mean() *10000);   
+                l_plc.append(mmean);                                      #  10 = 0.001 atd...
                 l_plc_col.append(col+"mean");
                 
         return (pd.DataFrame([l_plc], columns=[l_plc_col]));
