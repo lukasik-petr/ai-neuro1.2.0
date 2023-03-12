@@ -96,13 +96,9 @@
 #        self.n_in=3;      #min 0, max 6
 #       self.n_out=3;      #min 0, max 6
 #
-#     testovaci soubory....................:
-#     -rwxr-xr-x 1 plukasik plukasik 3840078 Feb 23 20:50 ./br_data/predict-debug.csv
-#     -rwxr-xr-x 1 plukasik plukasik 1398180 Feb 23 20:50 ./br_data/tm-ai_2022-11-v2vut.csv
-#     -rwxr-xr-x 1 plukasik plukasik  676705 Feb 23 20:50 ./br_data/tm-ai_2022-11-v3vut.csv
-#     -rwxr-xr-x 1 plukasik plukasik 1754187 Feb 23 20:50 ./br_data/tm-ai_2023-01-v2vut.csv
-#     testovaci soubory....................:
-#
+#------------------------------------------------------------------------
+# OPC parametry
+# self.plc_timer=10[s] - viz konzultace dne 2023-03-09
 #------------------------------------------------------------------------
 # import vseho co souvisi s demonem...
 #------------------------------------------------------------------------
@@ -145,6 +141,7 @@ from os.path import exists;
 from dateutil import parser;
 from sklearn.preprocessing import MinMaxScaler;
 from sklearn.preprocessing import StandardScaler;
+from sklearn.preprocessing import RobustScaler;
 from sklearn.metrics import mean_squared_error;
 from sklearn.metrics import max_error;
 from sklearn.utils import shuffle;
@@ -257,7 +254,7 @@ class OPCAgent():
         
     
     # konstrukter    
-    def __init__(self, batch, debug_mode):
+    def __init__(self, batch, debug_mode, plc_timer=10):
         
         self.logger     = logging.getLogger("ai");
         self.prefix     = "opc.tcp://";
@@ -273,13 +270,13 @@ class OPCAgent():
         self.uri1       = self.prefix+self.host1+":"+self.port1;
         self.uri2       = self.prefix+self.host2+":"+self.port2;
         
-        self.plc_timer  = 4 #[s];
+        self.plc_timer  = plc_timer #[s];
 
 #------------------------------------------------------------------------
 # ping_         
 #------------------------------------------------------------------------
     def pingSys(self, host, port):
-        parameter = '-n' if platform.system().lower()=='windows' else '-c';
+        parameter = '-n' if os.name=='nt' else '-c';
         command = ['ping', parameter, '1', host];
         response = call(command);
         if response == 0:    
@@ -786,7 +783,7 @@ class DataFactory():
     class DataResultDim:
           DataResultX: object;
 
-    def __init__(self, path_to_result, debug_mode, batch, current_date):
+    def __init__(self, path_to_result, debug_mode, batch, current_date, plc_timer):
 
         self.logger    = logging.getLogger("ai");
 
@@ -802,6 +799,7 @@ class DataFactory():
         self.debug_mode     = debug_mode;
         self.batch          = batch;
         self.current_date   = current_date;
+        self.plc_timer      = plc_timer
         
         
         self.parms  = [];
@@ -819,7 +817,10 @@ class DataFactory():
 
         self.df_recc = 0;
         # new OPCAgent()
-        self.opc = OPCAgent(batch=self.batch, debug_mode=self.debug_mode);
+        self.opc = OPCAgent(batch      = self.batch,
+                            debug_mode = self.debug_mode,
+                            plc_timer  = self.plc_timer
+                   );
         #parametry z parm file - nacte parametry z ./parms/parms.txt
         self.getParmsFromFile();
         
@@ -1498,12 +1499,12 @@ class squared_difference():
 class InnerNeuronLayerLSTM():
     #definice datoveho ramce
 
-    def __init__(self, logger, actf, dropout_filter, rate):
+    def __init__(self, logger, actf, dropout_filter, dropout_rate):
     
         self.logger         = logger;
         self.actf           = actf;
         self.dropout_filter = dropout_filter;
-        self.rate           = rate;
+        self.dropout_rate   = dropout_rate;
     
 
 #------------------------------------------------------------------------
@@ -1516,54 +1517,58 @@ class InnerNeuronLayerLSTM():
                     
             if "DENSE" in model:
                 self.logger.debug(model);
-                neural_model.add(layers.Dense(units= int(units),
-                                        activation=self.actf,
-                                        kernel_initializer=initializer,
-                                        bias_initializer="zeros"
-                )
-            );
+                neural_model.add(layers.Dense(units          = int(units),
+                                        activation           = self.actf,
+                                        kernel_initializer   = initializer,
+                                        bias_initializer     = "zeros"
+                                )
+                );
 
             if "LSTM" in model:
                 self.logger.debug(model);
-                neural_model.add(layers.LSTM(units = int(units), # self.units / 4
-                                        activation=self.actf,
-                                        recurrent_activation="sigmoid",
-                                        use_bias=True,
-                                        kernel_initializer=initializer,
-                                        recurrent_initializer="orthogonal",
-                                        bias_initializer="zeros",
-                                        unit_forget_bias=True,
-                                        return_sequences=True
-                )
-            );
+                neural_model.add(layers.LSTM(units           = int(units), # self.units / 4
+                                        activation           = self.actf,
+                                        recurrent_activation = "sigmoid",
+                                        use_bias             = True,
+                                        kernel_initializer   = initializer,
+                                        recurrent_initializer= "orthogonal",
+                                        bias_initializer     = "zeros",
+                                        unit_forget_bias     = True,
+                                        return_sequences     = True
+                                )
+               );
 
             if "GRU" in model:
                 self.logger.debug(model);
-                neural_model.add(layers.GRU(units = int(units), # self.units / 4
-                                        activation=self.actf,
-                                        recurrent_activation="sigmoid",
-                                        use_bias=True,
-                                        kernel_initializer=initializer,
-                                        recurrent_initializer="orthogonal",
-                                        bias_initializer='zeros',
-                                        return_sequences=True
-                )
-            );
+                neural_model.add(layers.GRU(units            = int(units), # self.units / 4
+                                        activation           = self.actf,
+                                        recurrent_activation = "sigmoid",
+                                        use_bias             = True,
+                                        kernel_initializer   = initializer,
+                                        recurrent_initializer= "orthogonal",
+                                        bias_initializer     = "zeros",
+                                        return_sequences     = True
+                                )
+                );
                 
             if "CONV1D" in model:
                 self.logger.debug(model);
-                neural_model.add(layers.Conv1D(filters=16,     # filters=32 
-                                        kernel_size=2,         # kernel_size=4
-                                        padding="same",
-                                        activation=self.actf,  # relu
-                                        use_bias=True,
-                                        kernel_initializer=initializer,
-                                        bias_initializer="zeros"
-                )
-            );
+                neural_model.add(layers.Conv1D(filters       = 16,     # filters=32 
+                                        kernel_size          = 2,         # kernel_size=4
+                                        padding              = "same",
+                                        activation           = self.actf,  # relu
+                                        use_bias             = True,
+                                        kernel_initializer   = initializer,
+                                        bias_initializer     = "zeros"
+                                )
+                );
 
             if self.dropout_filter:    
-                neural_model.add(Dropout(rate=self.rate, noise_shape=None, seed=None));
+                neural_model.add(Dropout(rate                = self.dropout_rate,
+                                         noise_shape         = None,
+                                         seed                = None
+                                )
+                );
 
         #end-for
 
@@ -1601,7 +1606,10 @@ class NeuronLayerLSTM():
                  thread_name = "",
                  ilcnt = 1,
                  ip_yesno = False,
-                 lrn_rate = 0.0005
+                 lrn_rate = 0.0005,
+                 window=1,
+                 n_in=0,
+                 n_out=3
     ):
         
         self.logger         = logging.getLogger("ai");
@@ -1644,12 +1652,12 @@ class NeuronLayerLSTM():
 #------------------------------------------------------------------------
         
         #parametry window-size
-        self.windowX        =  4; #min 0, max 64
+        self.windowX        =  window; #min 0, max 64
         #parametry window-size
-        self.windowY        =  4; #min 0, max 64
+        self.windowY        =  window; #min 0, max 64
         #parametry time-observe...
-        self.n_in           =  3; #min 0, max 6
-        self.n_out          =  3; #min 0, max 6
+        self.n_in           =  n_in;   #min 0, max 6
+        self.n_out          =  n_out;  #min 0, max 6
 
 #------------------------------------------------------------------------
 # myFloatFormat         
@@ -1867,8 +1875,13 @@ class NeuronLayerLSTM():
 
 
 #------------------------------------------------------------------------
-# Neuronova Vrstva - definice 
-#------------------------------------------------------------------------
+# Neuronova Vrstva - definice
+#
+# Standard versus MinMax Scaler
+# ------------------------------------------------------------------------
+# Se Standard Scalerem lze ziskat lepsi predikci o cca 1 [mum] nezli s
+# MinMax Scalerem. RobustScaler je neco mezi...
+# ------------------------------------------------------------------------
     def neuralNetworkLSTMtrain(self, DataTrain, thread_name):
 
         n_in         = self.n_in;
@@ -1886,9 +1899,10 @@ class NeuronLayerLSTM():
         layers_count_1 =  self.layers_1;       # pocet vrstev v hidden
         layers_count_2 =  self.layers_2;
         dropout_filter =  True;                # Dropout
-        rate           =  0.1;                 # a jeho rate....
+        dropout_rate   =  0.1;                 # a jeho rate....
+        is_input_dense =  True;                # uplatnime 1. vrstvu ?
 
-        inner_layer    =  InnerNeuronLayerLSTM(self.logger, self.actf, dropout_filter, rate);
+        inner_layer    =  InnerNeuronLayerLSTM(self.logger, self.actf, dropout_filter, dropout_rate);
 
         try:
             # df_parmY_train
@@ -1915,7 +1929,7 @@ class NeuronLayerLSTM():
                 return();
 
         # Scaler pro X  
-            self.x_scaler = StandardScaler(); #MinMaxScaler(feature_range=(0, 1));
+            self.x_scaler = StandardScaler(); 
             self.x_scaler.fit(x_train_data);
             x_train_data = self.x_scaler.transform(x_train_data);
             x_valid_data = self.x_scaler.transform(x_valid_data);
@@ -1924,7 +1938,7 @@ class NeuronLayerLSTM():
             X_valid = self.toTensorLSTM(x_valid_data, window=window_X);
         
         # Scaler pro Y  
-            self.y_scaler = StandardScaler(); #MinMaxScaler(feature_range=(0, 1));
+            self.y_scaler = StandardScaler(); 
             self.y_scaler.fit(y_train_data);
             y_train_data = self.y_scaler.transform(y_train_data);
             y_valid_data = self.y_scaler.transform(y_valid_data);
@@ -1942,20 +1956,30 @@ class NeuronLayerLSTM():
             if X_train.X_dataset.ndim == 2:
                 x_dim, y_dim = X_train.X_dataset.shape;
                 neural_model.add(Input(shape=(y_dim)));
-                neural_model.add(layers.Dense(units=(y_dim),
-                                              activation="linear",
-                                              kernel_initializer=initializer
-                                             )
+                
+                # pridej ke vstupu vrstvu Dense velikosti y_dim - zlepsuje
+                # predikci v ose Y
+                if is_input_dense:
+                    neural_model.add(layers.Dense(
+                                          units              = (y_dim),
+                                          activation         = "linear",
+                                          kernel_initializer = initializer
+                                    )
                                  );
 
             # 3D tenzor
             else:
                 x_dim, y_dim, z_dim = X_train.X_dataset.shape;
                 neural_model.add(Input(shape=(y_dim, z_dim)));
-                neural_model.add(layers.Dense(units=(y_dim * z_dim),
-                                              activation="linear",
-                                              kernel_initializer=initializer
-                                              )
+                
+                # pridej ke vstupu vrstvu Dense velikosti y_dim - zlepsuje
+                # predikci v ose Y
+                if is_input_dense:
+                    neural_model.add(layers.Dense(
+                                          units              = (y_dim * z_dim),
+                                          activation         = "linear",
+                                          kernel_initializer = initializer
+                                    )      
                                  );
 
 #------------------------------------------------------------------------    
@@ -2049,6 +2073,14 @@ class NeuronLayerLSTM():
             stopTime = int(time.time());
             self.logger.info("Trenink stop, %d[s]..." % int(stopTime - startTime));
 
+            if self.debug_mode:
+                try:
+                    file_p = open("parametry.txt", "a");
+                    file_p.writelines("Learn Time: " + str(int(stopTime - startTime))+"[s]\n");
+                    file_p.close();
+                except Exception as ex:
+                    self.logger.error(traceback.print_exc());
+                    
 
             # load model - nejlepsi RMSE
             #neural_model = self.loadModel(self.modelname);
@@ -2245,7 +2277,11 @@ class NeuroDaemon():
                  max_threads,
                  ilcnt,
                  ip_yesno,
-                 lrn_rate
+                 lrn_rate,
+                 window,
+                 n_in,
+                 n_out,
+                 plc_timer
             ):
 
         self.logger         = logging.getLogger('ai-daemon');
@@ -2275,6 +2311,10 @@ class NeuroDaemon():
         self.max_threads    = max_threads;
         self.ip_yesno       = ip_yesno;
         self.lrn_rate       = lrn_rate;
+        self.window         = window;
+        self.n_in           = n_in;
+        self.n_out          = n_out;
+        self.plc_timer      = plc_timer;
 
 #------------------------------------------------------------------------
 # start daemon pro parametr DENSE
@@ -2302,7 +2342,11 @@ class NeuroDaemon():
         self.logger.info("debug mode.......: %s" %(self.debug_mode));
         self.logger.info("interpolate......: %s" %(str(self.ip_yesno)));
         self.logger.info("lrn_rate.........: %s" %(self.lrn_rate));
+        self.logger.info("window...........: %s" %(self.window));
+        self.logger.info("timeseries- n_in.: %s" %(self.n_in));
+        self.logger.info("timeseries+ n_out: %s" %(self.n_out));
         self.logger.info("-----------------------------------");
+        self.logger.info("plc_timer[s].....: %s" %(self.plc_timer));
         time.sleep(2);
         return;
                      
@@ -2410,7 +2454,10 @@ class NeuroDaemon():
                                  thread_name    = thread_name,
                                  ilcnt          = self.ilcnt,
                                  ip_yesno       = self.ip_yesno,
-                                 lrn_rate       = self.lrn_rate
+                                 lrn_rate       = self.lrn_rate,
+                                 window         = self.window,
+                                 n_in           = self.n_in,
+                                 n_out          = self.n_out,
                                   
                             );
                             
@@ -2584,10 +2631,12 @@ class NeuroDaemon():
         data = None;
 
         try:
-            self.data = DataFactory(path_to_result=self.path_to_result, 
-                                    batch=self.batch,
-                                    debug_mode=self.debug_mode,
-                                    current_date=self.current_date);
+            self.data = DataFactory(path_to_result = self.path_to_result, 
+                                    batch          = self.batch,
+                                    debug_mode     = self.debug_mode,
+                                    current_date   = self.current_date,
+                                    plc_timer      = self.plc_timer
+                        );
         
                 
             parms = ["train",      #self.typ <train, predict>
@@ -2829,21 +2878,6 @@ def setEnv(path, model_1, model_2, type):
             pass;
         
         try: 
-            os.mkdir(Path(path_1));
-        except OSError as error: 
-            pass; 
-            
-        try: 
-            os.mkdir(Path(path_2));
-        except OSError as error: 
-            pass; 
-            
-        try: 
-            os.mkdir(Path(path_2+"/src"));
-        except OSError as error: 
-            pass; 
-            
-        try: 
             os.mkdir(Path("./models"));
         except OSError as error: 
             pass;
@@ -2858,27 +2892,42 @@ def setEnv(path, model_1, model_2, type):
         except OSError as error: 
             pass;
 
-        try:
-            shutil.copy("./py-src/"+progname, Path(path_2+"/src"));
-        except shutil.SpecialFileError as error:
-            print("Chyba pri kopii zdrojoveho kodu.", error)
-        except:
-            print("Chyba pri kopii zdrojoveho kodu.")
-
-        try:
-            shutil.copy("./cfg/ai-parms.cfg", Path(path_2+"/src"));
-        except shutil.SpecialFileError as error:
-            print("Chyba pri kopii ai-parms.cfg.", error)
-        except:
-            print("Chyba pri kopii ai-parms.cfg.")
+#       try: 
+#           os.mkdir(Path(path_1));
+#       except OSError as error: 
+#           pass; 
             
-        try:
-            shutil.copy("ai-daemon.sh", Path(path_2+"/src"));
-            shutil.copy("./py-src/ai-daemon.py", Path(path_2+"/src"));
-        except shutil.SpecialFileError as error:
-            print("Chyba pri kopii ai-parms.txt.", error)
-        except:
-            print("Chyba pri kopii ai-parms.txt.")
+#        try: 
+#            os.mkdir(Path(path_2));
+#        except OSError as error: 
+#            pass; 
+            
+#        try: 
+#            os.mkdir(Path(path_2+"/src"));
+#        except OSError as error: 
+#            pass; 
+            
+#        try:
+#            shutil.copy("./py-src/"+progname, Path(path_2+"/src"));
+#        except shutil.SpecialFileError as error:
+#            print("Chyba pri kopii zdrojoveho kodu.", error)
+#        except:
+#            print("Chyba pri kopii zdrojoveho kodu.")
+
+#        try:
+#            shutil.copy("./cfg/ai-parms.cfg", Path(path_2+"/src"));
+#        except shutil.SpecialFileError as error:
+#            print("Chyba pri kopii ai-parms.cfg.", error)
+#        except:
+#            print("Chyba pri kopii ai-parms.cfg.")
+            
+#       try:
+#           shutil.copy("ai-daemon.sh", Path(path_2+"/src"));
+#           shutil.copy("./py-src/ai-daemon.py", Path(path_2+"/src"));
+#       except shutil.SpecialFileError as error:
+#           print("Chyba pri kopii ai-parms.txt.", error)
+#       except:
+#           print("Chyba pri kopii ai-parms.txt.")
             
          
         return path_2, current_date;    
@@ -2903,9 +2952,13 @@ def signal_handler(self, signal, frame):
 # Help
 #------------------------------------------------------------------------
 def help (activations):
+    print(" ");
+    print(" ");
+    print(" ");
     print("HELP:");
     print("------------------------------------------------------------------------------------------------------ ");
     print("pouziti: <nazev_programu> <arg-1> <arg-2> <arg-3>,..., <arg-n>");
+    print("------------------------------------------------------------------------------------------------------ ");
     print(" ");
     print("        --help            list help ")
     print(" ");
@@ -2982,19 +3035,24 @@ def help (activations):
     print(" ");
     print("Parametry treninkove a predikcni mnoziny jsou v ./cfg/ai-parms.cfg.");
     print(" ");
-    print("Syntaxe v ai-parms.cfg je nasledujici: ");
-    print("#--------------------------------------------------------------------------------------------");
-    print("#Tenzor predlozeny k predikci                                                                ");
-    print("#--------------------------------------------------------------------------------------------");
+    print("Syntaxe v ai-parms.cfg: ");
+    print("--------------------------------------------------------------------------------------------");
+    print("Tenzor predlozeny k predikci                                                                ");
+    print("--------------------------------------------------------------------------------------------");
     print("df_parmx = temp_lo03, temp_st02, temp_st06, temp_st07, temp_S1, temp_vr05,...");
-    print("#--------------------------------------------------------------------------------------------");
-    print("#Tenzor predlozeny k treninku                                                                ");
-    print("#--------------------------------------------------------------------------------------------");
-    print("df_parmY = dev_y4, dev_z4, temp_lo03, temp_st02, temp_st06, temp_st07, temp_S1, temp_vr05,...");
+    print(" ");
+    print(" ");
+    print("Tenzor predlozeny k treninku                                                                ");
+    print("--------------------------------------------------------------------------------------------");
+    print("df_parmY = dev_y4, dev_z4, ...");
+    print(" ");
     print("POZOR!!! nazvy promennych se MUSI shodovat s hlavickovymi nazvy vstupniho datoveho CSV souboru");
     print(" ");
-    print("(C) GNU General Public License, autor Petr Lukasik , 2022 ");
     print(" ");
+    print(" ");
+    print("(C) GNU General Public License, autor Petr Lukasik , 2022,2023 ");
+    print(" ");
+    print("--------------------------------------------------------------------------------------------");
     print("Prerekvizity: linux Debian-11 nebo Ubuntu-20.04, (Windows se pokud mozno vyhnete)");
     print("              miniconda3,");
     print("              python 3.9, tensorflow 2.8, mathplotlib,  ");
@@ -3006,7 +3064,9 @@ def help (activations):
     print("              keras   ");
     print(" ");
     print(" ");
+    print("--------------------------------------------------------------------------------------------");
     print("Povolene aktivacni funkce: ");
+    print("--------------------------------------------------------------------------------------------");
     print(tabulate(activations, headers=['Akt. funkce', 'Popis']));
 
     return();
@@ -3136,7 +3196,10 @@ def main(argv):
     ip_yesno       = False;
     lrn_rate       = 0.0005;     #<0.0002 - 0.002>
     opts           = "";
-    
+    window         = 1;   #timeseries window
+    n_in           = 0;   #timeseries- n_in  
+    n_out          = 4;   #timeseries+ n_out
+    plc_timer      = 10;  #[s] perioda nacitani vzorku z PLC
         
 #-----------------------------------------------------------------------------
 # seznam povolenych aktivacnich funkci
@@ -3193,7 +3256,7 @@ def main(argv):
         try:
             
             opts, args = getopt.getopt(sys.argv[1:],
-                                       "hs:db:p:l:m1:m2:e:b:u1:u2:l1:l2:a:t1:t2:il:sh:ip:lr:h:x",
+                                       "hs:db:p:l:m1:m2:e:b:u1:u2:l1:l2:a:t1:t2:il:sh:ip:lr:w:ni:no:h:x",
                                       ["status=",
                                        "dbmode=", 
                                        "pidfile=", 
@@ -3213,6 +3276,9 @@ def main(argv):
                                        "shuffle=", 
                                        "interpolate=", 
                                        "lrnrate=", 
+                                       "window=", 
+                                       "n_in=", 
+                                       "n_out=", 
                                        "help="]
                                     );
             
@@ -3255,14 +3321,14 @@ def main(argv):
             elif opt in ("-m1", "--model_1"):
                 model_1 = arg.upper();
                 if model_1 not in models_1:
-                    print("Err: 'model_1', in ", models);
+                    print("Err: model_1, in ", models);
                     help(activations);
                     sys.exit(1);    
 
             elif opt in ("-m2", "--model_2"):
                 model_2 = arg.upper();
                 if model_2 not in models_2:
-                    print("Err: 'model_2', in ", models);
+                    print("Err: model_2, in ", models);
                     help(activations);
                     sys.exit(1);    
                 
@@ -3271,12 +3337,12 @@ def main(argv):
                     r = range(16-1, 512+1);
                     epochs = int(arg);
                     if epochs not in r:
-                        print("Err: 'epochs' in <16, 512>");
+                        print("Err: epochs in <16, 512>");
                         help(activations);
                         sys.exit(1)    
                         
                 except:
-                    print("Chyba: parametr 'epochs' musi byt integer v rozsahu <16, 512>");
+                    print("Chyba: parametr epochs musi byt integer v rozsahu <16, 512>");
                     help(activations);
                     sys.exit(1);
                         
@@ -3285,11 +3351,11 @@ def main(argv):
                     r = range(8-1, 1024+1);
                     units_1 =  int(arg);
                     if units_1 not in r:
-                        print("Err: 'units_1' in <0, 1024>");
+                        print("Err: units_1 in <0, 1024>");
                         help(activations);
                         sys.exit(1);    
                 except:    
-                    print("Err: 'units_1' in <0, 1024>");
+                    print("Err: units_1 in <0, 1024>");
                     help(activations);
                     sys.exit(1);
 
@@ -3298,11 +3364,11 @@ def main(argv):
                     r = range(-1, 1024+1);
                     units_2 =  int(arg);
                     if units_2 not in r:
-                        print("Err: 'units_2' in <0, 1024>");
+                        print("Err: units_2 in <0, 1024>");
                         help(activations);
                         sys.exit(1);    
                 except:    
-                    print("Err: 'units_2' in <0, 1024>");
+                    print("Err: units_2 in <0, 1024>");
                     help(activations);
                     sys.exit(1);
 
@@ -3312,11 +3378,11 @@ def main(argv):
                     r = range(-1, 5+1);
                     layers_1 = int(arg);
                     if layers_1 not in r:
-                        print("Err: 'layers_1' in <0, 5>");
+                        print("Err: layers_1 in <0, 5>");
                         help(activations);
                         sys.exit(1);    
                 except:    
-                    print("Err: 'layers_1' in <0, 5>");
+                    print("Err: layers_1 in <0, 5>");
                     help(activations);
                     sys.exit(1);
                     
@@ -3325,11 +3391,11 @@ def main(argv):
                     r = range(-1, 5+1);
                     layers_2 = int(arg);
                     if layers_2 not in r:
-                        print("Err: 'layers_2' in <0, 5>");
+                        print("Err: layers_2 in <0, 5>");
                         help(activations);
                         sys.exit(1);    
                 except:    
-                    print("Err: 'layers_2' in <0, 5>");
+                    print("Err: layers_2 in <0, 5>");
                     help(activations);
                     sys.exit(1);
                     
@@ -3347,16 +3413,16 @@ def main(argv):
                     batch = int(arg);
                     if batch not in r:
                         if debug_mode:
-                            print("Err: 'batch' in <16, 32768>");
+                            print("Err: batch in <16, 32768>");
                         else:    
-                            print("Err: 'batch' in <16, 256>");
+                            print("Err: batch in <16, 256>");
                         help(activations);
                         sys.exit(1)    
                 except:    
                     if debug_mode:
-                        print("Err: 'batch' in <16, 32768>");
+                        print("Err: batch in <16, 32768>");
                     else:    
-                        print("Err: 'batch' in <16, 256>");
+                        print("Err: batch in <16, 256>");
                     help(activations);
                     sys.exit(1)
                     
@@ -3386,11 +3452,11 @@ def main(argv):
                     r = range(-1, 16+1);
                     ilcnt  = int(arg);
                     if ilcnt not in r:
-                        print("Err: parametr 'ilcnt' in <1, 16>");
+                        print("Err: parametr ilcnt in <1, 16>");
                         help(activations);
                         sys.exit(1)    
                 except:    
-                    print("Err: parametr 'ilcnt' in <1, 16>");
+                    print("Err: parametr ilcnt in <1, 16>");
                     help(activations);
                     sys.exit(1)
 
@@ -3415,13 +3481,74 @@ def main(argv):
                     lrn_ratemult = int(lrn_rate*10000);
         
                     if lrn_ratemult not in r:
-                        print("Err: parametr 'lrn-rate' in <0.0002, 0.002>");
+                        print("Err: parametr lrn-rate in <0.0002, 0.002>");
                         help(activations);
                         sys.exit(1)    
                 except:    
-                    print("Err: parametr 'lrn-rate' in <0.0002, 0.002>");
+                    print("Err: parametr lrn-rate in <0.0002, 0.002>");
                     help(activations);
                     sys.exit(1)
+
+
+            elif opt in ("-w", "--window"):
+                try:
+                    r = range(-1, 24+1);
+
+                    window = int(arg);
+                    if window not in r:
+                        if debug_mode:
+                            print("Err: window in <1, 24>");
+                        else:    
+                            print("Err: window in <1, 24>");
+                        help(activations);
+                        sys.exit(1)    
+                except:    
+                    if debug_mode:
+                        print("Err: window in <1, 24>");
+                    else:    
+                        print("Err: window in <1, 24>");
+                    help(activations);
+                    sys.exit(1)
+
+            elif opt in ("-ni", "--n_in"):
+                try:
+                    r = range(-1, 6+1);
+                    n_in  = int(arg);
+                    if n_in not in r:
+                        if debug_mode:
+                            print("Err: n_in in <0, 6>");
+                        else:    
+                            print("Err: n_in in <0, 6>");
+                        help(activations);
+                        sys.exit(1)    
+                except:    
+                    if debug_mode:
+                        print("Err: n_in in <0, 6>");
+                    else:    
+                        print("Err: n_in in <0, 6>");
+                    help(activations);
+                    sys.exit(1)
+
+            elif opt in ("-no", "--n_out"):
+                try:
+                    r = range(-1, 6+1);
+                    n_out = int(arg);
+                    if n_out not in r:
+                        if debug_mode:
+                            print("Err: n_out in <0, 6>");
+                        else:    
+                            print("Err: n_out in <0, 6>");
+                        help(activations);
+                        sys.exit(1)    
+                except:    
+                    if debug_mode:
+                        print("Err: n_out in <0, 6>");
+                    else:    
+                        print("Err: n_out in <0, 6>");
+                    help(activations);
+                    sys.exit(1)
+                    
+        
                     
             elif opt in ["-h","--help"]:
                 help(activations);
@@ -3477,7 +3604,11 @@ def main(argv):
                                       max_threads    = max_threads,
                                       ilcnt          = ilcnt,
                                       ip_yesno       = ip_yesno,
-                                      lrn_rate       = lrn_rate
+                                      lrn_rate       = lrn_rate,
+                                      window         = window,
+                                      n_in           = n_in,
+                                      n_out          = n_out,
+                                      plc_timer      = plc_timer
                                 );
        
                 daemon_.info();
@@ -3523,7 +3654,11 @@ def main(argv):
                                       max_threads    = max_threads,
                                       ilcnt          = ilcnt,
                                       ip_yesno       = ip_yesno,
-                                      lrn_rate       = lrn_rate
+                                      lrn_rate       = lrn_rate,
+                                      window         = window,
+                                      n_in           = n_in,
+                                      n_out          = n_out,
+                                      plc_timer      = plc_timer
                                 );
        
                 daemon_.info();
@@ -3558,7 +3693,7 @@ def main(argv):
             
         elif "status" in status:
             try:
-                pf = file(pidf,'r');
+                pf = file(pidf, "r");
                 pid = int(pf.read().strip())
                 pf.close();
             except IOError:

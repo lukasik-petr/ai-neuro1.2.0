@@ -42,10 +42,14 @@ BATCH="128"         # pocet vzorku do predikce
 DBMODE="True"       # implicitne v debug modu - nezapisuje do PLC
 INTERPOLATE="False" # TRUE FALSE -interpolace splinem
 LRNRATE="0.001"     # learning rate <0.0002, 0.002>
+SHUFFLE="False"     #True, False
+WINDOW="3"          # timeseries window <0,24>
+N_IN="0"            # timeseries- n_in <0, 6>
+N_OUT="3"           # timeseries+ n_out <0, 6>
 RETVAL=0
 
 #----------------------------------------------------------------------
-# modifikace parametru z  'cmd lajny'
+# parametry z  'cmd lajny'
 #----------------------------------------------------------------------
 for i in "$@"; do
   case $i in
@@ -97,7 +101,23 @@ for i in "$@"; do
 	LRNRATE="${i#*=}"
 	shift # past argument=value
         ;;
-    -*|--*)
+    -w=*|--window=*)
+	WINDOW="${i#*=}"
+	shift # past argument=value
+        ;;
+    -ni=*|--n_in=*)
+	N_IN="${i#*=}"
+	shift # past argument=value
+        ;;
+    -no=*|--n_out=*)
+	N_OUT="${i#*=}"
+	shift # past argument=value
+        ;;
+    -sh=*|--shuffle=*)
+	SHUFFLE="${i#*=}"
+	shift # past argument=value
+        ;;
+      -*|--*)
 	echo "bash: Neznamy parametr $i"
 	ai-help
 	exit 1
@@ -108,7 +128,9 @@ for i in "$@"; do
 done
 
 #----------------------------------------------------------------------
+#----------------------------------------------------------------------
 # implicitni parametry - nejsou zadavany z 'cmd lajny'
+#----------------------------------------------------------------------
 # selu     - vyborna Z (z, RMSE=3) dobra Y (y, RMSE=6)
 # sigmoid  - horsi predikce (Y,Z, RMSE=8)
 # elu      - dobre vysledky (Y,Z, RMSE=5)
@@ -124,7 +146,6 @@ TXDAT1="2022-01-01 00:00:01"
 TXDAT2=`date +%Y-%m-%d -d "yesterday"`" 23:59:59"
 OPTIONS=""
 ILCNT="1"           #1 - 8
-SHUFFLE="True"      #True, False
 
 echo "bash: Spusteno s parametry:"  
 echo "      STATUS="$STATUS
@@ -144,6 +165,9 @@ echo "     LRNRATE="$LRNRATE
 echo "      TXDAT1="$TXDAT1
 echo "      TXDAT2="$TXDAT2
 echo "       ILCNT="$ILCNT
+echo "      WINDOW="$WINDOW
+echo "        N_IN="$N_IN
+echo "       N_OUT="$N_OUT
 
 #----------------------------------------------------------------------
 # start_daemon - aktivace miniconda a start demona
@@ -177,7 +201,10 @@ start_daemon(){
 	    --ilcnt="$ILCNT" \
 	    --shuffle="$SHUFFLE" \
 	    --interpolate="$INTERPOLATE" \
-	    --lrnrate="$LRNRATE" 
+	    --lrnrate="$LRNRATE" \
+	    --window="$WINDOW" \
+	    --n_in="$N_IN" \
+	    --n_out="$N_OUT" 
     
     conda deactivate
     curr_timestamp=`date "+%Y-%m-%d %H:%M:%S"`
@@ -265,43 +292,81 @@ reload() {
 # help   
 #----------------------------------------------------------------------
 ai-help_() {
-      echo "  parametry  -s<--status>  spusteno v rezimu program nebo demon "
+      echo "--------------------------------------------------------------------------------"
+      echo "Hlavni parametry"
+      echo "--------------------------------------------------------------------------------"
+      echo "            -s<--status>  -spusteno v rezimu program nebo demon "
       echo "                           muze nabyvat hodnot:                    "
       echo "                           start|run|stop|restart|force-reload|reload|status"
       echo ""
       echo ""
-      echo "            -u1<--units_1> pocet neuronu v prvni sekci skryte vrstvy <32,1024>"
+      echo "          -u1<--units_1>  -pocet neuronu v prvni sekci skryte vrstvy <32,1024>"
+      echo "                           <0, 1024>  u1=0 - prvni sekce hidden vrstvy disable"
       echo ""
       echo ""
-      echo "            -u2<--units_2> pocet neuronu v druhe sekci skryte vrstvy <0,1024>"
-      echo "                              -u2 = 0 - druha sekce skryte vrstvy disable...  "
+      echo "          -u2<--units_2>  -pocet neuronu v druhe sekci skryte vrstvy"
+      echo "                           <0, 1024>  u2=0 - druha sekce hidden vrstvy disable"
       echo ""
       echo ""
-      echo "            -m1<--model_1> typ prvni sekce skryte vrstvy site:"
+      echo "          -m1<--model_1>  -typ prvni sekce skryte vrstvy site:"
       echo "                             'DENSE' - sit typu DENSE - zakladni model"
       echo "                             'GRU'   - sit typu GRU "
       echo "                             'LSTM'  - sit typu LSTM"
       echo "                             'CONV1D'- sit typu Konvoluce"
       echo ""
       echo ""
-      echo "            -m2<--model_2> typ druhe sekce skryte vrstvy site:"
+      echo "          -m2<--model_2>  -typ druhe sekce skryte vrstvy site:"
       echo "                             'DENSE' - sit typu DENSE - zakladni model"
       echo "                             'GRU'   - sit typu GRU "
       echo "                             'LSTM'  - sit typu LSTM"
       echo "                             'CONV1D'- sit typu Konvoluce"
       echo "                             ''      - druha vrstva disable..."
       echo "                                         "
-      echo "            -e <--epochs> -pocet treninkovych epoch <64,128>"
+      echo "           -e <--epochs>  -pocet epoch"
+      echo "                           <64, 1024>"
       echo ""
       echo ""
-      echo "            -b <--batch>  -velikost vzorku dat  <32,2048>"
+      echo "            -b <--batch>  -delka tenzoru vstupujiciho do predikce"
       echo "                           optimalni velikost batch je v intervalu"
-      echo "                           cca.<32,2048>.                         "
-      echo "                           delka tenzoru vstupujiciho do predikce"
+      echo "                           <32,2048>.                             "
+      echo ""
+      echo "--------------------------------------------------------------------------------"
+      echo "Vedlejsi parametry"
+      echo "--------------------------------------------------------------------------------"
+      echo ""
+      echo "          -sh<--shuffle>  -data budou pred rozdelenim na treninkova   "
+      echo "                           a validacni shufflovana"
+      echo "                           <True, False>"
       echo ""
       echo ""
-      echo "PRIKLAD: ./ai-daemon.sh -t=predict -m1=DENSE -e=64 -b=128 -u1=72"
+      echo "            -w<--window>  -velikost okna pro 3D tenzor"
+      echo "                           <0,24>"
+      echo ""
+      echo ""
+      echo "             -ni<--n_in>  -timeseries- (minus)"
+      echo "                           <0, 6>"
+      echo ""
+      echo ""
+      echo "            -no<--n_out>  -timeseries+ (plus)"
+      echo "                           <0, 6>"
+      echo ""
+      echo ""
+      echo "      -ip<--interpolate>  -interpolace univariantni splajnou"
+      echo "                           <True,False>"
+      echo ""
+      echo "          -lr<--lrnrate>  -rychlost uceni "
+      echo "                           <0.0001, 0.02>"
+      echo ""
+      echo ""
+      echo "PRIKLAD: ./ai-daemon.sh -s=run -m1=DENSE -e=64 -b=128 -u1=72"
 }
+
+	    --shuffle="$SHUFFLE" \
+	    --interpolate="$INTERPOLATE" \
+	    --lrnrate="$LRNRATE" \
+	    --window="$WINDOW" \
+	    --n_in="$N_IN" \
+	    --n_out="$N_OUT" 
 
 
 #----------------------------------------------------------------------
