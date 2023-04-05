@@ -518,9 +518,15 @@ class OPCAgent():
 #------------------------------------------------------------------------
     def opcCollectorSendToPLC(self, df_plc, saveresult):
 
+
+        # Zapis aktualni hodnoty kompenzace CompX, CompY, CompZ
+        plcData.setCompX = int(df_plc[df_plc.columns[1]][0]);
+        plcData.setCompY = int(df_plc[df_plc.columns[2]][0]);
+        plcData.setCompZ = int(df_plc[df_plc.columns[3]][0]);
+
         # saveresult == True -> vysledky zapisujeme do csv, ale nezapisujeme do PLC
         if saveresult:  
-            self.logger.info("POZOR Nezapisujeme do PLC, jsme v DEBUG modu nebo v Linuxu !!!");
+            self.logger.info("Nezapisujeme do PLC, x="+str(plcData.CompX)+" y="+str(plcData.CompY)+" z="+str(plcData.CompZ));
             return False;
         
         plc_isRunning = True;
@@ -550,12 +556,6 @@ class OPCAgent():
             node = client.get_node("ns=2;s=Machine data.CompZ");
             plcData.CompZ = node.get_value();
             
-            # Zapis aktualni hodnoty kompenzace CompX, CompY, CompZ
-            plcData.setCompX = int(df_plc[df_plc.columns[1]][0]);
-            plcData.setCompY = int(df_plc[df_plc.columns[2]][0]);
-            plcData.setCompZ = int(df_plc[df_plc.columns[3]][0]);
-            
-            
             node_x = client.get_node("ns=2;s=Machine data.setCompX");
             node_x.set_value(ua.DataValue(ua.Variant(plcData.setCompX, ua.VariantType.Int32)));
             
@@ -569,8 +569,6 @@ class OPCAgent():
             parent = client.get_node("ns=2;s=Machine data")
             method = client.get_node("ns=2;s=Machine data.write_comp_val_TM_AI");
             parent.call_method(method); 
-            
-            
             
             # Nacti aktualni hodnoty kompenzace CompX, CompY, CompZ
             # get: CompX                
