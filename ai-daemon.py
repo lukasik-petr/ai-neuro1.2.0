@@ -1533,8 +1533,7 @@ class mean_squared_error():
     def __new__(self, y_true, y_pred):
         self.y_true = y_true;
         self.y_pred = y_pred;
-        mse = Kback.mean(Kback.square(y_pred - y_true)) 
-            + Kback.max(Kback.abs(y_pred - y_true),axis=-1);
+        mse = Kback.mean(Kback.square(y_pred - y_true)) + Kback.max(Kback.abs(y_pred - y_true),axis=-1);
         return (mse);
 
 class mean_absolute_error():
@@ -1744,8 +1743,7 @@ class NeuronLayerLSTM():
 #------------------------------------------------------------------------
     def my_mean_squared_error(self):
         def my_mse(y_true, y_pred):
-            mse   = Kback.mean(Kback.square(y_pred - y_true))
-                  + Kback.max(Kback.abs(y_pred - y_true),axis=-1);
+            mse   = Kback.mean(Kback.square(y_pred - y_true)) + Kback.max(Kback.abs(y_pred - y_true),axis=-1);
             return(mse);
 
         return (my_mse);
@@ -2070,7 +2068,8 @@ class NeuronLayerLSTM():
 #---#------------------------------------------------------------------------
 
             #existuje model?
-            is_model = os.path.isfile(self.weightname+".index"):
+            is_model = os.path.isfile(self.weightsname+".index");
+            
             if not is_model:
                 self.logger.info("Neexistuje model!!! -> trenink");
 
@@ -2178,7 +2177,7 @@ class NeuronLayerLSTM():
                                               validation_data = (X_valid.X_dataset, Y_valid.X_dataset),
                                               epochs         = self.epochs, 
                                               batch_size     = self.batch, 
-                                              verbose        = 0,
+                                              verbose        = 2,
                                               callbacks      = [save_best, early_stopping],
                                               shuffle        = self.shuffling,
                                               use_multiprocessing = True
