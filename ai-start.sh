@@ -6,18 +6,26 @@ export CONDA_HOME="~/miniconda3"
 export PATH=${CONDA_HOME}/bin:${PATH}
 export TF_ENABLE_ONEDNN_OPTS=0
 
-STATUS="start"               # start|run|stop|restart|force-reload|reload|status
-UNITS_1="230"                # pocet neuronu v prvni sekci
-UNITS_2="0"                  # pocet neuronu v druhe sekci
-MODEL_1="DENSE"              # typ site v prvni sekci
-MODEL_2="GRU"                # typ site v druhe sekci
-EPOCHS="500"                 # pocet epoch
-LAYERS_1="2"                 # pocet skrytych vrstev v prvni sekci
-LAYERS_2="0"                 # pocet skrytych vrstev v druhe sekci
-BATCH="128"                  # pocet vzorku k predikci
-DBMODE="False"               # debug mode <debug=True, nodebug=False>
-INTERPOLATE="False"          # interpolace dat splinem
-LRNRATE="0.001"              # learning rate <0.0002, 0.002>
+
+STATUS="start"      # run,start,....
+UNITS_1="280"       # GRU,LSTM=91, DENSE=330
+UNITS_2="0"         # GRU,LSTM=91, DENSE=330
+MODEL_1="DENSE"     # typ vrstvy_1 LSTM DENSE GRU CONV1D
+MODEL_2=""          # typ vrstvy_2 LSTM DENSE GRU CONV1D
+EPOCHS="500"        # Poc. treninkovych cyklu
+LAYERS_0="True"     # vrstva DENSE ve vstupu <True, False>
+LAYERS_1="2"        # pocet vrstev v prvni sekci
+LAYERS_2="0"        # pocet vrstev v druhe sekci
+BATCH="128"         # pocet vzorku do predikce
+DBMODE="False"      # implicitne v debug modu - nezapisuje do PLC
+INTERPOLATE="False" # TRUE FALSE -interpolace splinem
+LRNRATE="0.0005"    # learning rate <0.0002, 0.002>
+SHUFFLE="True"      #True, False
+WINDOW="3"          # timeseries window <0,24>
+N_IN="0"            # timeseries- n_in <0, 6>
+N_OUT="3"           # timeseries+ n_out <0, 6>
+RETVAL=0
+
 
 
 eval "$(conda shell.bash hook)"
@@ -78,19 +86,29 @@ for i in "$@"; do
   esac
 done
 
- ./ai-daemon.sh \
-     --status="$STATUS" \
-     --dbmode="$DBMODE"\
-     --model_1="$MODEL_1" \
-     --model_2="$MODEL_2" \
-     --epochs="$EPOCHS" \
-     --batch="$BATCH" \
-     --units_1="$UNITS_1" \
-     --units_2="$UNITS_2" \
-     --layers_1="$LAYERS_1" \
-     --layers_2="$LAYERS_2" \
-     --interpolate="$INTERPOLATE" \
-     --lrnrate="$LRNRATE" 
+
+echo ""
+echo "----------------------------------------------------------------"
+echo "Demon pro kompenzaci teplotnich anomalii na stroji pro osy X,Y,Z"
+echo "----------------------------------------------------------------"
+./ai-daemon.sh \
+  --status="$STATUS" \
+  --units_1="$UNITS_1" \
+  --units_2="$UNITS_2" \
+  --model_1="$MODEL_1" \
+  --model_2="$MODEL_2" \
+  --epochs="$EPOCHS" \
+  --layers_0="$LAYERS_0" \
+  --layers_1="$LAYERS_1" \
+  --layers_2="$LAYERS_2" \
+  --batch="$BATCH" \
+  --dbmode="$DBMODE"\
+  --interpolate="$INTERPOLATE" \
+  --lrnrate="$LRNRATE" \
+  --window="$WINDOW" \
+  --n_in="$N_IN" \
+  --n_out="$N_OUT" \
+  --shuffle="$SHUFFLE" 
 
 echo "ai-daemon start..."
 exit 0

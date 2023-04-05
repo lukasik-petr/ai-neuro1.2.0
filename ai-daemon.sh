@@ -30,23 +30,25 @@ logfile=${LOGFILE-$FILE_PATH/log/ai-daemon.log}
 #----------------------------------------------------------------------
 # implicitni parametry - mozno zmenit  z 'cmd lajny'
 #----------------------------------------------------------------------
-STATUS="run"        # run,start,....
-UNITS_1="330"       # GRU,LSTM=91, DENSE=330
+STATUS="start"      # run,start,....
+UNITS_1="280"       # GRU,LSTM=91, DENSE=330
 UNITS_2="0"         # GRU,LSTM=91, DENSE=330
 MODEL_1="DENSE"     # typ vrstvy_1 LSTM DENSE GRU CONV1D
-MODEL_2="GRU"       # typ vrstvy_2 LSTM DENSE GRU CONV1D
+MODEL_2=""          # typ vrstvy_2 LSTM DENSE GRU CONV1D
 EPOCHS="500"        # Poc. treninkovych cyklu
+LAYERS_0="True"     # vrstva DENSE ve vstupu <True, False>
 LAYERS_1="2"        # pocet vrstev v prvni sekci
 LAYERS_2="0"        # pocet vrstev v druhe sekci
 BATCH="128"         # pocet vzorku do predikce
-DBMODE="True"       # implicitne v debug modu - nezapisuje do PLC
+DBMODE="False"      # implicitne v debug modu - nezapisuje do PLC
 INTERPOLATE="False" # TRUE FALSE -interpolace splinem
-LRNRATE="0.001"     # learning rate <0.0002, 0.002>
-SHUFFLE="False"     #True, False
+LRNRATE="0.0005"    # learning rate <0.0002, 0.002>
+SHUFFLE="True"      #True, False
 WINDOW="3"          # timeseries window <0,24>
 N_IN="0"            # timeseries- n_in <0, 6>
 N_OUT="3"           # timeseries+ n_out <0, 6>
 RETVAL=0
+RETRAIN="False"     # Bude se po kazdem startu i o pulnoci pretrenovavat?
 
 #----------------------------------------------------------------------
 # parametry z  'cmd lajny'
@@ -76,6 +78,10 @@ for i in "$@"; do
     -e=*|--epochs=*)
         EPOCHS="${i#*=}"
         shift # past argument=value
+        ;;
+    -l0=*|--layers_0=*)
+	LAYERS_0="${i#*=}"
+	shift # past argument=value
         ;;
     -l1=*|--layers_1=*)
 	LAYERS_1="${i#*=}"
@@ -117,7 +123,11 @@ for i in "$@"; do
 	SHUFFLE="${i#*=}"
 	shift # past argument=value
         ;;
-      -*|--*)
+     -rm=*|--retrain_mode=*)
+	RETRAIN="${i#*=}"
+	shift # past argument=value
+        ;;
+     -*|--*)
 	echo "bash: Neznamy parametr $i"
 	ai-help
 	exit 1
@@ -146,28 +156,32 @@ TXDAT1="2022-01-01 00:00:01"
 TXDAT2=`date +%Y-%m-%d -d "yesterday"`" 23:59:59"
 OPTIONS=""
 ILCNT="1"           #1 - 8
+PLC_TIMER="2"       #[s] - vzorkovaci perioda getPLC
 
-echo "bash: Spusteno s parametry:"  
-echo "      STATUS="$STATUS
-echo "     UNITS_1="$UNITS_1
-echo "     UNITS_2="$UNITS_2
-echo "     MODEL_1="$MODEL_1
-echo "     MODEL_2="$MODEL_2
-echo "      EPOCHS="$EPOCHS
-echo "    LAYERS_1="$LAYERS_1
-echo "    LAYERS_2="$LAYERS_2
-echo "       BATCH="$BATCH
-echo "      DBMODE="$DBMODE
-echo " INTERPOLATE="$INTERPOLATE
-echo "     SHUFFLE="$SHUFFLE
-echo "        ACTF="$ACTF
-echo "     LRNRATE="$LRNRATE
-echo "      TXDAT1="$TXDAT1
-echo "      TXDAT2="$TXDAT2
-echo "       ILCNT="$ILCNT
-echo "      WINDOW="$WINDOW
-echo "        N_IN="$N_IN
-echo "       N_OUT="$N_OUT
+text="bash: Spusteno s parametry:"  
+text=$text",\n      status="$STATUS" "
+text=$text",\n     units_1="$UNITS_1" "
+text=$text",\n     units_2="$UNITS_2" "" "
+text=$text",\n     model_1="$MODEL_1" "
+text=$text",\n     model_2="$MODEL_2" "
+text=$text",\n      epochs="$EPOCHS" "
+text=$text",\n    layers_0="$LAYERS_0" "
+text=$text",\n    layers_1="$LAYERS_1" "
+text=$text",\n    layers_2="$LAYERS_2" "
+text=$text",\n       batch="$BATCH" "
+text=$text",\n      dbmode="$DBMODE" "
+text=$text",\n interpolate="$INTERPOLATE" "
+text=$text",\n     shuffle="$SHUFFLE" "
+text=$text",\n        actf="$ACTF" "
+text=$text",\n     lrnrate="$LRNRATE" "
+text=$text",\n      txdat1="$TXDAT1" "
+text=$text",\n      txdat2="$TXDAT2" "
+text=$text",\n       ilcnt="$ILCNT" "
+text=$text",\n      window="$WINDOW" "
+text=$text",\n        n_in="$N_IN" "
+text=$text",\n       n_out="$N_OUT" "
+text=$text",\n   plc_timer="$PLC_TIMER" "
+text=$text",\n     retrain="$RETRAIN"\n"
 
 #----------------------------------------------------------------------
 # start_daemon - aktivace miniconda a start demona
@@ -180,6 +194,7 @@ start_daemon(){
     echo "Start ulohy: "$curr_timestamp
     echo "Treninkova mnozina v rozsahu: "$TXDAT1" : "$TXDAT2
     echo "----------------------------------------------------------------"
+    printf "$text"
     eval "$(conda shell.bash hook)"
     conda activate tf
     python3 ./py-src/ai-daemon.py \
@@ -193,6 +208,7 @@ start_daemon(){
 	    --batch="$BATCH" \
 	    --units_1="$UNITS_1" \
 	    --units_2="$UNITS_2" \
+	    --layers_0="$LAYERS_0" \
 	    --layers_1="$LAYERS_1" \
 	    --layers_2="$LAYERS_2" \
 	    --actf="$ACTF" \
@@ -204,7 +220,9 @@ start_daemon(){
 	    --lrnrate="$LRNRATE" \
 	    --window="$WINDOW" \
 	    --n_in="$N_IN" \
-	    --n_out="$N_OUT" 
+	    --n_out="$N_OUT" \
+            --plc_timer="$PLC_TIMER" \
+  	    --retrain_mode="$RETRAIN" 
     
     conda deactivate
     curr_timestamp=`date "+%Y-%m-%d %H:%M:%S"`

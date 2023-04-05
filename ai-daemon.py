@@ -98,7 +98,7 @@
 #
 #------------------------------------------------------------------------
 # OPC parametry
-# self.plc_timer=10[s] - viz konzultace dne 2023-03-09
+# self.plc_timer=2[s] 
 #------------------------------------------------------------------------
 # import vseho co souvisi s demonem...
 #------------------------------------------------------------------------
@@ -173,7 +173,8 @@ from tensorflow.keras.layers import Conv1D;
 from tensorflow.keras.layers import Dropout
 from tensorflow.keras.models import load_model
 from tensorflow.keras.callbacks import EarlyStopping
-
+from tensorflow.keras import backend as Kback
+from tensorflow.keras.models import model_from_json
 from _cffi_backend import string
 #scipy
 from scipy.signal import butter, lfilter, freqz
@@ -201,7 +202,6 @@ try:
 except ImportError:
     is_train = None
 
-from keras import backend as K
     
 
 #logger
@@ -220,13 +220,13 @@ df_debug_header=[];
 
 '''
 def root_mean_squared_error(y_true, y_pred):
-    return K.sqrt(K.mean(K.square(y_pred - y_true)))
+    return Kback.sqrt(Kback.mean(Kback.square(y_pred - y_true)))
 
 def mse(y_true, y_pred):
-    return K.mean(K.square(y_pred - y_true)) + K.max(K.abs(y_pred - y_true), axis=0)
+    return Kback.mean(Kback.square(y_pred - y_true)) + Kback.max(Kback.abs(y_pred - y_true), axis=0)
 
 def mae(y_true, y_pred):
-    return K.max(K.abs(y_pred - y_true), axis=0)
+    return Kback.max(Kback.abs(y_pred - y_true), axis=0)
     
 '''
 #------------------------------------------------------------------------
@@ -254,7 +254,7 @@ class OPCAgent():
         
     
     # konstrukter    
-    def __init__(self, batch, debug_mode, plc_timer=10):
+    def __init__(self, batch, debug_mode, plc_timer=2):
         
         self.logger     = logging.getLogger("ai");
         self.prefix     = "opc.tcp://";
@@ -276,7 +276,7 @@ class OPCAgent():
 # ping_         
 #------------------------------------------------------------------------
     def pingSys(self, host, port):
-        parameter = '-n' if os.name=='nt' else '-c';
+        parameter = '-n' if os.name == 'nt' else '-c';
         command = ['ping', parameter, '1', host];
         response = call(command);
         if response == 0:    
@@ -516,11 +516,12 @@ class OPCAgent():
 #                   +---setCompZ         
 #                   +---write_comp_val_TM_AI         
 #------------------------------------------------------------------------
-    def opcCollectorSendToPLC(self, df_plc):
+    def opcCollectorSendToPLC(self, df_plc, saveresult):
 
-        if self.debug_mode is True:
-            self.logger.error("POZOR Nezapisujeme do PLC, jsme v DEBUG modu !!!");
-            return;
+        # saveresult == True -> vysledky zapisujeme do csv, ale nezapisujeme do PLC
+        if saveresult:  
+            self.logger.info("POZOR Nezapisujeme do PLC, jsme v DEBUG modu nebo v Linuxu !!!");
+            return False;
         
         plc_isRunning = True;
         
@@ -583,6 +584,7 @@ class OPCAgent():
             # get: CompZ                
             node = client.get_node("ns=2;s=Machine data.CompZ");
             plcData.CompZ = node.get_value();
+            self.logger.info("Data zapsana do PLC: x="+str(plcData.CompX)+" y="+str(plcData.CompY)+" z="+str(plcData.CompZ));
             return plc_isRunning;
             
         
@@ -936,6 +938,39 @@ class DataFactory():
         return(df);
 
 #-----------------------------------------------------------------------
+# checkCols
+#-----------------------------------------------------------------------
+#    Kontrola syntaxe v df-parms.cfg                         
+#    df.parms.cfg musi obsahovat sloupce, ktere jsou v dataframu.            
+#-----------------------------------------------------------------------
+    def checkCols(self, cols, filename):
+
+        df = pd.read_csv(filename,
+                         sep=",|;", 
+                         engine='python',  
+                         header=0, 
+                         encoding="utf-8"
+                );
+
+        cols1 = df.columns.tolist();
+       
+        # jsou  duplicity ?
+        if len(cols) != len(set(cols)):
+            self.logger.error("Chybna syntaxe v ai-parms.cfg, duplicity v nazvech, exit...");
+            sys.exit(1);
+            
+        # vyskytuji se zadane sloupce v dataframu?
+        for c in cols:
+            if c not in cols1:
+                self.logger.error("Chybna syntaxe v ai-parms.cfg, >>"+c+"<< exit...");
+                sys.exit(1);
+        
+
+        return(True)
+
+    
+
+#-----------------------------------------------------------------------
 # getData
 #-----------------------------------------------------------------------
 #    Hlavni metoda pro manipulaci s daty
@@ -956,6 +991,7 @@ class DataFactory():
         txdt_b      = False;
         df          = pd.DataFrame(columns = self.df_parmS);
         df_test     = pd.DataFrame(columns = self.df_parmS);
+        usecols     = ["datetime","tool", "state", "program"];
         
         try:
            
@@ -982,7 +1018,10 @@ class DataFactory():
                 # definice sloupcu v dataframe ["datetime","tool", "state", "program"]
                 # plus sloupce z ai-parms.cfg
                 # Nebudeme cpat do pameti data, ktera nepotrebujeme...
-                usecols = ["datetime","tool", "state", "program"];
+                # Kontrola syntaxe v df-parms.csv
+                
+                self.checkCols(self.df_parmS, joined_list[0]);
+
                 for col in self.df_parmS:
                     usecols.append(col);
 
@@ -1028,7 +1067,7 @@ class DataFactory():
                 if size > 0:
                     self.logger.info("Data nactena, pocet vet: %d, ilcnt: %d " %(size, ilcnt));
                 #     
-                if shuffling is True:
+                if shuffling:
                     df = self.shuffData(df); 
             
                 df["index"] = pd.Index(range(0, len(df), 1));
@@ -1039,7 +1078,7 @@ class DataFactory():
 # Data pro predict - if type == "train" || type == "predict"
 #----------------------------------------------------------------------------- 
             self.logger.debug("Data pro predikci....");
-            if self.debug_mode is True:
+            if self.debug_mode:
                 df_test = self.opc.opcCollectorGetDebugData(self.df_parmS);
             else:
                 self.logger.debug("Data pro predikci getPlcData....");
@@ -1082,9 +1121,20 @@ class DataFactory():
                       units,
                       epochs,
                       ip_yesno=False):
-        
+
         saveresult = True;
-        
+
+        if  self.debug_mode:
+            saveresult = True;
+        else:
+            if os.name == "nt":
+                saveresult = False;
+            else:    
+                saveresult = True;  # pseudo debug - DEBUG MOD
+                                    # zapisujeme do CSV, ale nezapisujeme do PLC
+                                    # kvuli oddeleni produkcni verze na
+                                    # BR-PC a na vm28.os.zps
+
         thread_name = thread_name[0 : len(thread_name) - 1].replace("_","");
         
         col_names_Y = list(self.DataTrain.df_parmY);
@@ -1107,7 +1157,7 @@ class DataFactory():
                     frames.append(df);
 
         df_result = pd.concat(frames); 
-        df_result = df_result.groupby("index").mean();
+        df_result = df_result.groupby("index").mean(numeric_only=True);
         df_plc = self.formatToPLC(df_result, col_names_Y);
                                       
         path = Path(filename)
@@ -1124,35 +1174,27 @@ class DataFactory():
             df_plc.to_csv(filename, mode = "w", index=False, header=True, float_format='%.5f');
 
         # data do PLC - debug mode -> disable...
-        if self.debug_mode is False:
-            result_opc = self.opc.opcCollectorSendToPLC(df_plc=df_plc );
+        if not self.debug_mode:
+            result_opc = self.opc.opcCollectorSendToPLC(df_plc = df_plc, saveresult = saveresult);
             if result_opc:
                 self.logger.debug("Data do PLC byla zapsana.");
             else:    
-                self.logger.error("Data do PLC nebyla zapsana.");
+                self.logger.error("Data do PLC nebyla zapsana, jsme v debug modu.");
         
-        # data ke zkoumani zapisujeme v pripade behu typu "train" a zaroven v debug modu
-        if  self.debug_mode is True:
-            saveresult=True;
-        else:
-            saveresult=False;
-            
-        if saveresult:
-            self.logger.debug(filename + " vznikne.");
+        # data ke zkoumani zapisujeme v  debug modu
 
-                                   
-            self.saveDataResult(timestamp_start,
-                                df_result,
-                                model,
-                                typ,
-                                units,
-                                epochs,
-                                saveresult=True,
-                                ip_yesno=False);                    
 
-        else:
-            self.logger.debug(filename + " nevznikne :" +str(saveresult));
-        
+
+        self.saveDataResult(timestamp_start,
+                            df_result,
+                            model,
+                            typ,
+                            units,
+                            epochs,
+                            saveresult=saveresult,
+                            ip_yesno=False
+        );                    
+
         #vynuluj 
         for result in threads_result:
             result[0] = None;
@@ -1200,11 +1242,19 @@ class DataFactory():
                        typ,
                        units,
                        epochs,
-                       saveresult        = True,
+                       saveresult,
                        ip_yesno          = False
                 ):
 
+
         filename="./result/res_"+str(self.current_date)[0:10]+"_"+model+ "_"+str(units)+ "_"+ str(epochs)+".csv";
+
+        if not saveresult:
+            self.logger.debug(filename + " nevznikne.");
+            return;
+        else:
+            self.logger.debug(filename + " vznikne.");
+
         try:
             col_names_Y = list(self.DataTrain.df_parmY);
             col_names_x = list(self.DataTrain.df_parmx);
@@ -1385,6 +1435,9 @@ class DataFactory():
                         pass;
                     else:
                         self.df_parmx = line.split(",");
+                        while('' in self.df_parmx):
+                            self.df_parmx.remove('')
+
                     
                 Y = line.startswith("df_parmY=");
                 if Y:
@@ -1393,6 +1446,8 @@ class DataFactory():
                         pass;
                     else:
                         self.df_parmY = line.split(",");
+                        while('' in self.df_parmY):
+                            self.df_parmY.remove('')
 
             
             if self.df_parmY is None: 
@@ -1459,42 +1514,42 @@ class DataFactory():
     def myIntFormat(self, x):
         return ('%.f' % x).rstrip('.');
 
-
-
-
-
 #------------------------------------------------------------------------
 # metric funkce SquaredDifference
 #------------------------------------------------------------------------
-#----------------------------------------------------------------------------------
-#Tridy metrickych funkci root_mean_squared_error, mse, mae, squared_difference
-#----------------------------------------------------------------------------------
+#Tridy metrickych funkci
+# root_mean_squared_error, mse, mae, squared_difference
+#------------------------------------------------------------------------
 class root_mean_squared_error():
 
     def __new__(self, y_true, y_pred):
         self.y_true = y_true;
         self.y_pred = y_pred;
-        return K.sqrt(K.mean(K.square(y_pred - y_true)));
+        rmse = Kback.sqrt(Kback.mean(Kback.square(y_pred - y_true)));
+        return (rmse);
     
 class mean_squared_error():
     
     def __new__(self, y_true, y_pred):
         self.y_true = y_true;
         self.y_pred = y_pred;
-        return K.mean(K.square(y_pred - y_true)) + K.max(K.abs(y_pred - y_true),axis=-1);
+        mse = Kback.mean(Kback.square(y_pred - y_true)) 
+            + Kback.max(Kback.abs(y_pred - y_true),axis=-1);
+        return (mse);
 
 class mean_absolute_error():
 
     def __new__(self, y_true, y_pred):
         self.y_true = y_true;
         self.y_pred = y_pred;
-        return K.max(K.abs(self.y_pred - self.y_true), axis=-1);
+        mae = Kback.max(Kback.abs(y_pred - y_true), axis=-1);
+        return (mae);
         
 class squared_difference():
     
     def __new__(self, y_true, y_pred):
-        squared_difference = tf.square(y_true - y_pred)
-        return tf.reduce_mean(squared_difference, axis=-1);  # Note the `axis=-1`
+        sd = tf.square(y_true - y_pred)
+        return (tf.reduce_mean(squared_difference, axis=-1));  # Note the `axis=-1`
 
 
 #------------------------------------------------------------------------
@@ -1511,6 +1566,8 @@ class InnerNeuronLayerLSTM():
         self.dropout_rate   = dropout_rate;
     
 
+
+        
 #------------------------------------------------------------------------
 # inner layer
 # volano z neuralNetworkLSTMtrain 
@@ -1601,6 +1658,7 @@ class NeuronLayerLSTM():
                  txdat2, 
                  units_1, 
                  units_2, 
+                 layers_0,
                  layers_1,
                  layers_2,
                  shuffling, 
@@ -1613,7 +1671,8 @@ class NeuronLayerLSTM():
                  lrn_rate = 0.0005,
                  window=1,
                  n_in=0,
-                 n_out=3
+                 n_out=3,
+                 retrain_mode=True
     ):
         
         self.logger         = logging.getLogger("ai");
@@ -1635,8 +1694,9 @@ class NeuronLayerLSTM():
         self.model_2        = model_2;
         self.units_1        = units_1;        # pocet neuronu v hidden
         self.units_2        = units_2;
-        self.layers_1       = layers_1;       # pocet vrstev v hidden
-        self.layers_2       = layers_2;
+        self.layers_0       = layers_0;       # <True> <False>
+        self.layers_1       = layers_1;       # pocet vrstev v hidden 1
+        self.layers_2       = layers_2;       # pocet vrstev v hidden 2
 
         self.shuffling      = shuffling;
         self.actf           = actf;
@@ -1648,7 +1708,9 @@ class NeuronLayerLSTM():
         self.neural_model   = None;
         self.ip_yesno       = ip_yesno;
         self.lrn_rate       = lrn_rate;
-        self.modelname      = "./models/checkpoint";
+        self.modelname      = "./models/tm-ai_model";
+        self.weightsname    = "./models/tm-ai_weights";
+        self.retrain_mode   = retrain_mode;
 
 #------------------------------------------------------------------------
 #  POZOR! u siti typu LSTM a GRU musi byt self.windowX a
@@ -1663,6 +1725,53 @@ class NeuronLayerLSTM():
         self.n_in           =  n_in;   #min 0, max 6
         self.n_out          =  n_out;  #min 0, max 6
 
+
+#------------------------------------------------------------------------
+#  custom metriky
+#------------------------------------------------------------------------
+#  root_mean_square_error         
+#------------------------------------------------------------------------
+    def my_root_mean_squared_error(self):
+        def my_rmse(y_true, y_pred):
+            rmse = Kback.sqrt(Kback.mean(Kback.square(y_pred - y_true)))
+            return (rmse);
+
+        return (my_rmse);
+
+
+#------------------------------------------------------------------------
+#  mean_square_error         
+#------------------------------------------------------------------------
+    def my_mean_squared_error(self):
+        def my_mse(y_true, y_pred):
+            mse   = Kback.mean(Kback.square(y_pred - y_true))
+                  + Kback.max(Kback.abs(y_pred - y_true),axis=-1);
+            return(mse);
+
+        return (my_mse);
+
+    
+#------------------------------------------------------------------------
+#  mean_absolute_error         
+#------------------------------------------------------------------------
+    def my_mean_absolute_error():
+        def my_mae(y_true, y_pred):
+            mae  = Kback.max(Kback.abs(y_pred - y_true), axis=-1);
+            return (mae);
+
+        return(my_mae);
+        
+#------------------------------------------------------------------------
+#  squared_difference         
+#------------------------------------------------------------------------
+    def my_squared_difference():
+        def my_sd(y_true, y_pred):
+            sd = tf.square(y_true - y_pred);
+            sd = tf.reduce_mean(sd, axis=-1);
+            return (sd);
+    
+        return (my_sd);
+        
 #------------------------------------------------------------------------
 # myFloatFormat         
 #------------------------------------------------------------------------
@@ -1846,48 +1955,37 @@ class NeuronLayerLSTM():
         
         icnt = 0;
         for col in colnames:
-            df_mean[col] =  df.iloc[:,icnt::icol].mean(axis=1);
+            df_mean[col] =  df.iloc[:,icnt::icol].mean(axis=1, numeric_only=True);
             icnt += 1;
         
         return(df_mean);
     
 #------------------------------------------------------------------------
-# Neuronova Vrstva - definice 
+# Neuronova Vrstva - vymaz predchozi stopy po uceni
 #------------------------------------------------------------------------
-    def loadModel(self, modelname):
-
-        model = tf.keras.models.load_model(modelname,
-                #custom_objects= {"root_mean_squared_error": root_mean_squared_error},
-                custom_objects= {"mean_squared_error": mean_squared_error},
-                compile       = True,
-                options       = None
-        );
+    def removeModel(self, path):
         
-        return model;
-    
-#------------------------------------------------------------------------
-# Neuronova Vrstva - definice 
-#------------------------------------------------------------------------
-    def saveModel(self, neural_model, modelname):
+        # param <path> muze byt absolutni nebo relativni
+        try:
+            path = "./" + path.split("/")[1];
+            file_path = Path(path);
+            
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                os.remove(file_path);     # remove souboru
+                
+            elif os.path.isdir(file_path):
+                shutil.rmtree(file_path); # remove adresare vcetne podadresaru
+                
+        except Exception as ex:
+            self.logger.error("nazev %s neni soubor ani adresar...", path);
+            self.logger.error(traceback.print_exc());                
         
-        neural_model.save(modelname,
-                          overwrite=True,
-                          include_optimizer=True,
-                          save_format="h5");
-
-        return modelname;
-
-
 #------------------------------------------------------------------------
 # Neuronova Vrstva - definice
-#
-# Standard versus MinMax Scaler
 # ------------------------------------------------------------------------
-# Se Standard Scalerem lze ziskat lepsi predikci o cca 1 [mum] nezli s
-# MinMax Scalerem. RobustScaler je neco mezi...
+# Tovarna na vyrobu a trenink site
 # ------------------------------------------------------------------------
-    def neuralNetworkLSTMtrain(self, DataTrain, thread_name):
-
+    def neuralNetworkLSTMFactory(self, DataTrain, thread_name):
         n_in         = self.n_in;
         n_out        = self.n_out;
 
@@ -1899,13 +1997,17 @@ class NeuronLayerLSTM():
         units_1      = self.units_1;
         units_2      = self.units_2;
 
+        layers_0     = self.layers_0;           # uplatnime 1. vrstvu ?
+        
         # ladici parametry
         layers_count_1 =  self.layers_1;       # pocet vrstev v hidden
         layers_count_2 =  self.layers_2;
         dropout_filter =  True;                # Dropout
         dropout_rate   =  0.1;                 # a jeho rate....
-        is_input_dense =  True;                # uplatnime 1. vrstvu ?
 
+        #definice metriky
+        myrmse         =  self.my_root_mean_squared_error();
+        #inner layer
         inner_layer    =  InnerNeuronLayerLSTM(self.logger, self.actf, dropout_filter, dropout_rate);
 
         try:
@@ -1949,156 +2051,179 @@ class NeuronLayerLSTM():
 
             Y_train = self.toTensorLSTM(y_train_data, window=window_Y);
             Y_valid = self.toTensorLSTM(y_valid_data, window=window_Y);
-            
-#------------------------------------------------------------------------    
-# Input layer    
-#------------------------------------------------------------------------
+
+         # definice modelu   
             neural_model = tf.keras.Sequential();
             initializer  = tf.keras.initializers.RandomUniform(minval=-0.05, maxval=0.05, seed=None)
-  
-            # 2D tenzor
-            if X_train.X_dataset.ndim == 2:
-                x_dim, y_dim = X_train.X_dataset.shape;
-                neural_model.add(Input(shape=(y_dim)));
-                
-                # pridej ke vstupu vrstvu Dense velikosti y_dim - zlepsuje
-                # predikci v ose Y
-                if is_input_dense:
-                    neural_model.add(layers.Dense(
-                                          units              = (y_dim),
-                                          activation         = "linear",
-                                          kernel_initializer = initializer
-                                    )
-                                 );
-
-            # 3D tenzor
-            else:
-                x_dim, y_dim, z_dim = X_train.X_dataset.shape;
-                neural_model.add(Input(shape=(y_dim, z_dim)));
-                
-                # pridej ke vstupu vrstvu Dense velikosti y_dim - zlepsuje
-                # predikci v ose Y
-                if is_input_dense:
-                    neural_model.add(layers.Dense(
-                                          units              = (y_dim * z_dim),
-                                          activation         = "linear",
-                                          kernel_initializer = initializer
-                                    )      
-                                 );
-
-#------------------------------------------------------------------------    
-# Hidden layer - begin DENSE, LSTM, GRU, CONV1D
-#------------------------------------------------------------------------
-            # 1. hidden  
-            if units_1 > 0 and layers_count_1 > 0 and model_1 != "": 
-                neural_model = inner_layer.innerLayer(
-                                          neural_model = neural_model,
-                                          model        = model_1,
-                                          units        = units_1,
-                                          layers_count = layers_count_1,
-                                          initializer  = initializer
-
-                             );
-                
-            # 2. hidden  
-            if units_2 > 0 and layers_count_2 > 0 and model_2 != "": 
-                neural_model = inner_layer.innerLayer(
-                                          neural_model = neural_model,
-                                          model        = model_2,
-                                          units        = units_2,
-                                          layers_count = layers_count_2,
-                                          initializer  = initializer
-                             );
-
-#------------------------------------------------------------------------    
-# Output layer
-#------------------------------------------------------------------------    
-        
-            neural_model.add(layers.Dense(Y_train.cols,
-                                          activation="linear",
-                                          kernel_initializer=initializer
-                                         )
-                             );
-
-#------------------------------------------------------------------------    
-# Compile layer    
-#------------------------------------------------------------------------    
             lr = tf.keras.optimizers.schedules.ExponentialDecay(
-                                          self.lrn_rate,
-                                          decay_steps = 9500,
-                                          decay_rate  = 0.4,
-                                          staircase   = False
-                             );
-
+                          self.lrn_rate,
+                          decay_steps = 9500,
+                          decay_rate  = 0.4,
+                          staircase   = False
+            );
+ 
             optimizer = tf.keras.optimizers.Adam(learning_rate = lr);
             rmse      = tf.keras.metrics.RootMeanSquaredError();
-            
-            neural_model.compile(
-                                          optimizer = optimizer,
-                                          loss      = [mean_squared_error],
-                                          metrics   = [root_mean_squared_error],
-                             );
 
-        # natrenuj neural_model na vstupni dataset
+#---#------------------------------------------------------------------------    
+# Hi# vyrob a natrenuj kompletni model
+#---#------------------------------------------------------------------------
 
-#------------------------------------------------------------------------    
-# Fit layer         
-#------------------------------------------------------------------------    
-            early_stopping   = tf.keras.callbacks.EarlyStopping(
-                                          monitor        = "val_root_mean_squared_error",
-                                          patience       = 15,
-                                          verbose        =  1,
-                             );
+            #existuje model?
+            is_model = os.path.isfile(self.weightname+".index"):
+            if not is_model:
+                self.logger.info("Neexistuje model!!! -> trenink");
 
-        # save model
-
-            save_best = tf.keras.callbacks.ModelCheckpoint(
-                                          filepath       = self.modelname,
-                                          save_best_only = True,
-                                          save_weights_only = True,
-                                          monitor        = "val_loss",
-                                          mode           = "min"
-                             );
-
-            self.logger.info("Trenink start...");
-            startTime = int(time.time());
-            
-            history = neural_model.fit(
-                                          X_train.X_dataset, Y_train.X_dataset, 
-                                          validation_data = (X_valid.X_dataset, Y_valid.X_dataset),
-                                          epochs         = self.epochs, 
-                                          batch_size     = self.batch, 
-                                          verbose        = 0,
-                                          callbacks      = [save_best, early_stopping],
-                                          shuffle        = self.shuffling,
-                                          use_multiprocessing = True
-                             );
-            
-            stopTime = int(time.time());
-            self.logger.info("Trenink stop, %d[s]..." % int(stopTime - startTime));
-
-            if self.debug_mode:
-                try:
-                    file_p = open("parametry.txt", "a");
-                    file_p.writelines("Learn Time: " + str(int(stopTime - startTime))+"[s]\n");
-                    file_p.close();
-                except Exception as ex:
-                    self.logger.error(traceback.print_exc());
+            if self.retrain_mode or not is_model:
+                self.logger.info("Model bude zapsan do %s" , self.modelname);            
+                # 2D tenzor
+                if X_train.X_dataset.ndim == 2:
+                    x_dim, y_dim = X_train.X_dataset.shape;
+                    neural_model.add(Input(shape=(y_dim)));
                     
-
-            # load model - nejlepsi RMSE
-            #neural_model = self.loadModel(self.modelname);
-            neural_model.load_weights(self.modelname);
-            neural_model.summary();
-
-            self.neural_model = neural_model;
+                    # pridej ke vstupu vrstvu Dense velikosti y_dim - zlepsuje
+                    # predikci v ose Y
+                    if layers_0:
+                        neural_model.add(layers.Dense(
+                                              units              = (y_dim),
+                                              activation         = "linear",
+                                              kernel_initializer = initializer
+                                        )
+                                     );
+        
+                # 3D tenzor
+                else:
+                    x_dim, y_dim, z_dim = X_train.X_dataset.shape;
+                    neural_model.add(Input(shape=(y_dim, z_dim)));
+                    
+                    # pridej ke vstupu vrstvu Dense velikosti y_dim - zlepsuje
+                    # predikci v ose Y
+                    if layers_0:
+                        neural_model.add(layers.Dense(
+                                              units              = (y_dim * z_dim),
+                                              activation         = "linear",
+                                              kernel_initializer = initializer
+                                        )      
+                                     );
+        
+#---#------------------------------------------------------------------------    
+# Hi# Hidden layer - begin DENSE, LSTM, GRU, CONV1D
+#---#------------------------------------------------------------------------
+                # 1. hidden  
+                if units_1 > 0 and layers_count_1 > 0 and model_1 != "": 
+                    neural_model = inner_layer.innerLayer(
+                                              neural_model = neural_model,
+                                              model        = model_1,
+                                              units        = units_1,
+                                              layers_count = layers_count_1,
+                                              initializer  = initializer
+        
+                                 );
+                    
+                # 2. hidden  
+                if units_2 > 0 and layers_count_2 > 0 and model_2 != "": 
+                    neural_model = inner_layer.innerLayer(
+                                              neural_model = neural_model,
+                                              model        = model_2,
+                                              units        = units_2,
+                                              layers_count = layers_count_2,
+                                              initializer  = initializer
+                                 );
+        
+#---#------------------------------------------------------------------------    
+# Ou# Output layer
+#---#------------------------------------------------------------------------    
             
-            return;
+                neural_model.add(layers.Dense(Y_train.cols,
+                                              activation="linear",
+                                              kernel_initializer=initializer
+                                             )
+                                 );
+        
+#---#------------------------------------------------------------------------    
+# Co# Compile layer    
+#---#------------------------------------------------------------------------
+                neural_model.compile(
+                                              optimizer = optimizer,
+                                              loss      = myrmse,
+                                              metrics   = ["accuracy"],
+                                 );
+                
+        
+#---#------------------------------------------------------------------------    
+# Co# Optimize     
+#---#------------------------------------------------------------------------
+                early_stopping   = tf.keras.callbacks.EarlyStopping(
+                                              monitor        = "val_loss",
+                                              patience       = 15,
+                                              verbose        =  1,
+                                 );
+        
+                save_best = tf.keras.callbacks.ModelCheckpoint(
+                                              filepath       = self.weightsname,
+                                              save_best_only = True,
+                                              save_weights_only = True,
+                                              #monitor        = "val_loss",
+                                              mode           = "min"
+                                 );
+        
+                self.logger.info("Trenink start...");
+                startTime = int(time.time());
+                
+#---#------------------------------------------------------------------------    
+# Fi# Fit data to model         
+#---#------------------------------------------------------------------------    
+                history = neural_model.fit(
+                                              X_train.X_dataset, Y_train.X_dataset, 
+                                              validation_data = (X_valid.X_dataset, Y_valid.X_dataset),
+                                              epochs         = self.epochs, 
+                                              batch_size     = self.batch, 
+                                              verbose        = 0,
+                                              callbacks      = [save_best, early_stopping],
+                                              shuffle        = self.shuffling,
+                                              use_multiprocessing = True
+                                 );
+        
+                scores = neural_model.evaluate( X_train.X_dataset, Y_train.X_dataset, verbose=0)
+                neural_model.summary();
+
+                neural_model.save(self.modelname);
+
+                self.logger.info("%s: %.2f%%" % (neural_model.metrics_names[1], scores[1]*100));
+                stopTime = int(time.time());
+                self.logger.info("Trenink stop, %d[s]..." % int(stopTime - startTime));
+                
+                file_p = open("parametry.txt", "a");
+                file_p.writelines("Learn Time: " + str(int(stopTime - startTime))+"[s]\n");
+                file_p.close();
+                # self.saveModel(neural_model, self.modelname);
+                self.logger.info("Model %s zapsan." , self.modelname);
+
+                self.neural_model = neural_model;
+                return;
+            
+#---#------------------------------------------------------------------------    
+# Hi# nacti a zkompiluj kompletni model z predchoziho treninku
+#---#------------------------------------------------------------------------
+            else:
+                neural_model = load_model(self.modelname, 
+                                          custom_objects = {"my_rmse": myrmse},
+                                          compile = True);
+
+                
+
+                scores = neural_model.evaluate( X_train.X_dataset, Y_train.X_dataset, verbose=0)
+                neural_model.load_weights(self.weightsname);
+                self.logger.info("Model nacten z  %s." , self.modelname);
+                neural_model.summary();
+        
+                self.neural_model = neural_model;
+                return;
         
         except Exception as ex:
             self.logger.error(traceback.print_exc());
-        
-        
+            traceback.print_exc();
+
 #------------------------------------------------------------------------
 # Neuronova Vrstava - predict 
 #------------------------------------------------------------------------
@@ -2143,6 +2268,11 @@ class NeuronLayerLSTM():
             self.logger.error("          zkuste nejdrive --typ == train !!!");
             self.logger.error(traceback.print_exc());
 
+
+# ------------------------------------------------------------------------
+# Se Standard Scalerem lze ziskat lepsi predikci o cca 1 [mum] nezli s
+# MinMax Scalerem. RobustScaler je neco mezi...
+# ------------------------------------------------------------------------
 #------------------------------------------------------------------------
 # neuralNetworkLSTMexec - exec
 # return True - predict data nactena
@@ -2169,14 +2299,14 @@ class NeuronLayerLSTM():
             if self.typ == 'train':
                 self.logger.debug("Start threadu: %s v TRAIN modu " %(thread_name));
 
-                self.neuralNetworkLSTMtrain(self.data.DataTrainDim.DataTrain, thread_name);
+                self.neuralNetworkLSTMFactory(self.data.DataTrainDim.DataTrain, thread_name);
             else:    
                 self.logger.debug("Start threadu: %s v PREDICT modu " %(thread_name));
             
             if self.data.DataTrainDim.DataTrain.test is None or len(self.data.DataTrainDim.DataTrain.test) == 0: 
                 self.logger.info("Data : "+ thread_name+ " pro predikci nejsou k dispozici....");
                 
-                if self.debug_mode is True:
+                if self.debug_mode:
                     self.logger.info("Exit...");
                     sys.exit(1);
                 else:    
@@ -2270,11 +2400,12 @@ class NeuroDaemon():
                  batch, 
                  units_1,
                  units_2,
+                 layers_0,
                  layers_1,
                  layers_2,
                  shuffling, 
                  txdat1, 
-                 txdat2, 
+                 txdat2,
                  actf, 
                  debug_mode,
                  current_date,
@@ -2285,7 +2416,8 @@ class NeuroDaemon():
                  window,
                  n_in,
                  n_out,
-                 plc_timer
+                 plc_timer,
+                 retrain_mode
             ):
 
         self.logger         = logging.getLogger('ai-daemon');
@@ -2298,6 +2430,7 @@ class NeuroDaemon():
         self.batch          = batch;
         self.units_1        = units_1;
         self.units_2        = units_2;
+        self.layers_0       = layers_0;
         self.layers_1       = layers_1;
         self.layers_2       = layers_2;
         self.shuffling      = shuffling;
@@ -2319,6 +2452,7 @@ class NeuroDaemon():
         self.n_in           = n_in;
         self.n_out          = n_out;
         self.plc_timer      = plc_timer;
+        self.retrain_mode   = retrain_mode;
 
 #------------------------------------------------------------------------
 # start daemon pro parametr DENSE
@@ -2327,17 +2461,18 @@ class NeuroDaemon():
     def printParms(self, debug_mode):
 
         time.sleep(1);
-        self.logger.info("-----------------------------------");
+        self.logger.info("--------------------------------------");
         self.logger.info("epochs...........: %s" %(str(self.epochs)));
         self.logger.info("batch............: %s" %(str(self.batch)));
-        self.logger.info("-----------------------------------");
+        self.logger.info("--------------------------------------");
         self.logger.info("model_1..........: %s" %(self.model_1));
         self.logger.info("model_2..........: %s" %(self.model_2));
         self.logger.info("units_1..........: %s" %(str(self.units_1)));
         self.logger.info("units_2..........: %s" %(str(self.units_2)));
+        self.logger.info("layers_0.........: %s" %(str(self.layers_0)));
         self.logger.info("layers_1.........: %s" %(str(self.layers_1)));
         self.logger.info("layers_2.........: %s" %(str(self.layers_2)));
-        self.logger.info("-----------------------------------");
+        self.logger.info("--------------------------------------");
         self.logger.info("act.func.........: %s" %(self.actf));
         self.logger.info("txdat1...........: %s" %(self.txdat1));
         self.logger.info("txdat2...........: %s" %(self.txdat2));
@@ -2349,9 +2484,10 @@ class NeuroDaemon():
         self.logger.info("window...........: %s" %(self.window));
         self.logger.info("timeseries- n_in.: %s" %(self.n_in));
         self.logger.info("timeseries+ n_out: %s" %(self.n_out));
-        self.logger.info("-----------------------------------");
+        self.logger.info("--------------------------------------");
         self.logger.info("plc_timer[s].....: %s" %(self.plc_timer));
-        time.sleep(2);
+        self.logger.info("retrain_mode.....: %s" %(self.retrain_mode));
+        self.logger.info("--------------------------------------");
         return;
                      
 #------------------------------------------------------------------------
@@ -2449,6 +2585,7 @@ class NeuroDaemon():
                                  txdat2         = self.txdat2,
                                  units_1        = units_1,
                                  units_2        = units_2,
+                                 layers_0       = self.layers_0,
                                  layers_1       = self.layers_1,
                                  layers_2       = self.layers_2,
                                  shuffling      = self.shuffling,
@@ -2462,18 +2599,18 @@ class NeuroDaemon():
                                  window         = self.window,
                                  n_in           = self.n_in,
                                  n_out          = self.n_out,
-                                  
+                                 retrain_mode   = self.retrain_mode
                             );
                             
         neural.setData(self.data);
         plc_isRunning = self.data.isPing();
 
-        if plc_isRunning is True:
+        if plc_isRunning:
             sleep_interval =   0;         #  0 [s]
         else:
             sleep_interval = 600;         #600 [s]
             
-        if self.debug_mode is True:
+        if self.debug_mode:
             sleep_interval =   0;         #  0 [s]   
 
         current_date =  datetime.now().strftime(timestamp_format);
@@ -2895,44 +3032,6 @@ def setEnv(path, model_1, model_2, type):
             os.mkdir(Path("./br_data/getplc"));
         except OSError as error: 
             pass;
-
-#       try: 
-#           os.mkdir(Path(path_1));
-#       except OSError as error: 
-#           pass; 
-            
-#        try: 
-#            os.mkdir(Path(path_2));
-#        except OSError as error: 
-#            pass; 
-            
-#        try: 
-#            os.mkdir(Path(path_2+"/src"));
-#        except OSError as error: 
-#            pass; 
-            
-#        try:
-#            shutil.copy("./py-src/"+progname, Path(path_2+"/src"));
-#        except shutil.SpecialFileError as error:
-#            print("Chyba pri kopii zdrojoveho kodu.", error)
-#        except:
-#            print("Chyba pri kopii zdrojoveho kodu.")
-
-#        try:
-#            shutil.copy("./cfg/ai-parms.cfg", Path(path_2+"/src"));
-#        except shutil.SpecialFileError as error:
-#            print("Chyba pri kopii ai-parms.cfg.", error)
-#        except:
-#            print("Chyba pri kopii ai-parms.cfg.")
-            
-#       try:
-#           shutil.copy("ai-daemon.sh", Path(path_2+"/src"));
-#           shutil.copy("./py-src/ai-daemon.py", Path(path_2+"/src"));
-#       except shutil.SpecialFileError as error:
-#           print("Chyba pri kopii ai-parms.txt.", error)
-#       except:
-#           print("Chyba pri kopii ai-parms.txt.")
-            
          
         return path_2, current_date;    
 
@@ -3025,16 +3124,14 @@ def help (activations):
     print("                                                            3 = nactena kazda treti...");
     print(" ");
     print("        --shuffle         nahodne promichani dat ");
-    print(" ");
-    print("                                 shuffle=True ");
-    print("                                 shuffle=False");
+    print("                          <True, False>");
     print(" ");
     print("        --interpolate     interpolace treninkovych i predikcnich dat ");
     print("                                 splinem univariateSpline ");
+    print("                          <True, False>");
     print(" ");
-    print("                                 interpolate = True");
-    print("                                 interpolate = False");
-    print(" ");
+    print("        --plc_timer       vzorkovaci perioda pro cteni z PLC ");
+    print("                          <2, 10>[s]");
     print(" ");
     print(" ");
     print("Parametry treninkove a predikcni mnoziny jsou v ./cfg/ai-parms.cfg.");
@@ -3178,32 +3275,34 @@ def main(argv):
 # implicitni  parametry - plati pokud nejsou prebity parametry ze sys.argv[1:]
 #-----------------------------------------------------------------------------
     parm0          = sys.argv[0];        
-    model_1        = "DENSE";
-    model_2        = "";
-    epochs         = 64;
-    batch          = 256;
-    units_1        = 71;
-    units_2        = 0;
+    model_1        = "DENSE";     # model vrstvy 1
+    model_2        = "GRU";       # model vrstvy 2
+    epochs         = 500;         # pocet epoch
+    batch          = 128;         # velikost datoveho vzorku
+    units_1        = 660;         # pocet neuronu 1 vrstvy
+    units_2        = 360;         # pocet neuronu 2 vrstvy
     txdat1         = "2022-01-01 00:00:01";
     txdat2         = (datetime.now() + timedelta(days=-1)).strftime("%Y-%m-%d %H:%M:%S");
-    shuffling      = True;
-    actf           = "elu";
-    pid            = 0;
+    shuffling      = True;        # Shuffle ?
+    actf           = "elu";       # aktivacni funkce
+    pid            = 0;           # process id u daemona (ve windows nelze pouzit daemonize)
     status         = "";
     startTime      = datetime.now();
     type           = "train";
-    debug_mode     = False;
-    max_threads    = 1;
-    ilcnt          = 1; # reccnt
-    layers_1       = 2;
-    layers_2       = 0;
-    ip_yesno       = False;
-    lrn_rate       = 0.0005;     #<0.0002 - 0.002>
+    debug_mode     = False;       # debug mode 
+    max_threads    = 1;           # Pocet threadu (nepouziva se, implicitne 1)
+    ilcnt          = 1;           # reccnt
+    layers_0       = True;        # vrstva 0
+    layers_1       = 2;           # vrstva 1
+    layers_2       = 0;           # vrstva 2
+    ip_yesno       = False;       # interpolace ?
+    lrn_rate       = 0.0005;      #<0.0002 - 0.002>
     opts           = "";
-    window         = 1;   #timeseries window
-    n_in           = 0;   #timeseries- n_in  
-    n_out          = 4;   #timeseries+ n_out
-    plc_timer      = 10;  #[s] perioda nacitani vzorku z PLC
+    window         = 1;           # timeseries window
+    n_in           = 0;           # timeseries(-) n_in  
+    n_out          = 4;           # timeseries(+) n_out
+    plc_timer      = 2;           # perioda nacitani vzorku z PLC [s]
+    retrain_mode   = False;       # implicitni trenink
         
 #-----------------------------------------------------------------------------
 # seznam povolenych aktivacnich funkci
@@ -3226,9 +3325,13 @@ def main(argv):
                    ["tanh","Hyperbolic tangent activation function"],
                    ["None","pro GRU a LSTM site"]];
 
-    models_1    = ["DENSE","LSTM","GRU","CONV1D"];
-    models_2    = ["DENSE","LSTM","GRU","CONV1D",""];
+    models_1     = ["DENSE","LSTM","GRU","CONV1D"];
+    models_2     = ["DENSE","LSTM","GRU","CONV1D",""];
 
+    try: 
+        os.mkdir(Path("./log"));
+    except OSError as error: 
+        pass;
 
     logger = setLogger(logf);
     
@@ -3260,7 +3363,7 @@ def main(argv):
         try:
             
             opts, args = getopt.getopt(sys.argv[1:],
-                                       "hs:db:p:l:m1:m2:e:b:u1:u2:l1:l2:a:t1:t2:il:sh:ip:lr:w:ni:no:h:x",
+                                       "hs:db:p:l:m1:m2:e:b:u1:u2:l0:l1:l2:a:rm:t1:t2:il:sh:ip:lr:w:ni:no:pt:h:x",
                                       ["status=",
                                        "dbmode=", 
                                        "pidfile=", 
@@ -3271,9 +3374,11 @@ def main(argv):
                                        "batch=", 
                                        "units_1=", 
                                        "units_2=", 
+                                       "layers_0=", 
                                        "layers_1=", 
                                        "layers_2=", 
                                        "actf=", 
+                                       "retrain_mode=",
                                        "txdat1=", 
                                        "txdat2=", 
                                        "ilcnt=", 
@@ -3283,6 +3388,7 @@ def main(argv):
                                        "window=", 
                                        "n_in=", 
                                        "n_out=", 
+                                       "plc_timer=", 
                                        "help="]
                                     );
             
@@ -3376,6 +3482,12 @@ def main(argv):
                     help(activations);
                     sys.exit(1);
 
+            elif opt in ("-l0", "--layers_0"):
+                l0 = arg.upper();
+                if "TRUE" in l0:
+                    layers_0=True;
+                else:
+                    layers_0=False;
                     
             elif opt in ("-l1", "--layers_1"):
                 try:
@@ -3410,6 +3522,16 @@ def main(argv):
                     print("Err: aktivacni funkce - viz help...");
                     help(activations)
                     sys.exit(1);
+
+
+            elif opt in ["-rm","--retrain_mode"]: #train nodebug....
+                
+                if "true" in arg.lower():
+                    retrain_mode = True;
+                else:
+                    retrain_mode = False;
+
+                    
                         
             elif opt in ("-b", "--batch"):
                 try:
@@ -3552,6 +3674,24 @@ def main(argv):
                     help(activations);
                     sys.exit(1)
                     
+            elif opt in ("-pt", "--plc_timer"):
+                try:
+                    r = range(1, 10+1);
+                    plc_timer = int(arg);
+                    if plc_timer not in r:
+                        if debug_mode:
+                            print("Err: plc_timer in <2, 10>[s]");
+                        else:    
+                            print("Err: plc_timer in <2, 10>[s]");
+                        help(activations);
+                        sys.exit(1)    
+                except:    
+                    if debug_mode:
+                        print("Err: plc_timer in <2, 10>[s]");
+                    else:    
+                        print("Err: plc_timer in <2, 10>[s]");
+                    help(activations);
+                    sys.exit(1)
         
                     
             elif opt in ["-h","--help"]:
@@ -3597,6 +3737,7 @@ def main(argv):
                                       batch          = batch,
                                       units_1        = units_1,
                                       units_2        = units_2,
+                                      layers_0       = layers_0,
                                       layers_1       = layers_1,
                                       layers_2       = layers_2,
                                       shuffling      = shuffling,
@@ -3612,7 +3753,8 @@ def main(argv):
                                       window         = window,
                                       n_in           = n_in,
                                       n_out          = n_out,
-                                      plc_timer      = plc_timer
+                                      plc_timer      = plc_timer,
+                                      retrain_mode   = retrain_mode
                                 );
        
                 daemon_.info();
@@ -3647,6 +3789,7 @@ def main(argv):
                                       batch          = batch,
                                       units_1        = units_1,
                                       units_2        = units_2,
+                                      layers_0       = layers_0,
                                       layers_1       = layers_1,
                                       layers_2       = layers_2,
                                       shuffling      = shuffling,
@@ -3662,7 +3805,8 @@ def main(argv):
                                       window         = window,
                                       n_in           = n_in,
                                       n_out          = n_out,
-                                      plc_timer      = plc_timer
+                                      plc_timer      = plc_timer,
+                                      retrain_mode   = retrain_mode
                                 );
        
                 daemon_.info();
