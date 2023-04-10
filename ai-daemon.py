@@ -939,7 +939,6 @@ class DataFactory():
         df = shuffle(df);
         df = df.reset_index(drop=True);
         self.logger.info("Shuffle...");
-                
         return(df);
 
 #-----------------------------------------------------------------------
@@ -1073,11 +1072,12 @@ class DataFactory():
                     self.logger.info("Data nactena, pocet vet: %d, ilcnt: %d " %(size, ilcnt));
                 #     
                 if shuffling:
-                    df = self.shuffData(df); 
-            
+                    df = self.shuffData(df);
+                    
+                self.logger.debug("Index 0, len(df): %d " %(len(df)));
                 df["index"] = pd.Index(range(0, len(df), 1));
                 df.set_index("index", inplace=True);
-
+                
 
 #----------------------------------------------------------------------------- 
 # Data pro predict - if type == "train" || type == "predict"
@@ -1579,6 +1579,8 @@ class InnerNeuronLayerLSTM():
     def innerLayer(self, neural_model, model, units, layers_count, initializer):
         
         for i in range(layers_count):
+            self.logger.debug("inner layer: %d" %(layers_count));
+            
                     
             if "DENSE" in model:
                 self.logger.debug(model);
@@ -1798,8 +1800,9 @@ class NeuronLayerLSTM():
     def prepJitter(self, df_size):
         
         jitter = np.random.normal(0, 0.0005, df_size);
-        for i in range(len(jitter)):
-            jitter[i] = self.myFloatFormat(jitter[i]);
+        self.logger.debug("prepJitter...");
+        #for i in range(len(jitter)):
+        #    jitter[i] = self.myFloatFormat(jitter[i]);
         return jitter;    
         #return(pd.DataFrame(jitter, columns=["jitter"]));
 
@@ -1810,13 +1813,13 @@ class NeuronLayerLSTM():
         
         if not jitter_:
             return(df);
-        
-        df_size = len(df);
-        
+       
+        self.logger.debug("addJitter...");
         for col in df.head():
             if  col in df_cols and ptypes.is_numeric_dtype(df[col]):
-                jitter = self.prepJitter(df_size);
-                df[col].apply(lambda x: np.asarray(x) + np.asarray(jitter));
+                self.logger.debug("appJitter... %s " %(col));
+                df[col] = df[col] + self.prepJitter(len(df));
+                
         return(df);
         
 #------------------------------------------------------------------------
@@ -2007,37 +2010,44 @@ class NeuronLayerLSTM():
         layers_count_2 =  self.layers_2;
         dropout_filter =  True;                # Dropout
         dropout_rate   =  0.1;                 # a jeho rate....
+        self.logger.debug("LSTMFactory init...");
 
         #definice metriky
         myrmse         =  self.my_root_mean_squared_error();
         #inner layer
+        self.logger.debug("InnerLayer init...");
         inner_layer    =  InnerNeuronLayerLSTM(self.logger, self.actf, dropout_filter, dropout_rate);
 
         try:
+            self.logger.debug("Priprava dat df_parmY train...");
             # df_parmY_train
             y_train      = DataTrain.train[DataTrain.df_parmY];
             y_train      = pd.concat([y_train, self.addJitter(y_train, DataTrain.df_parmY, False)]);
             y_train_data = np.array(self.toTimeSeries(y_train, n_in, n_out));
             
             # df_parmY_valid
+            self.logger.debug("Priprava dat df_parmY valid...");
             y_valid      = DataTrain.valid[DataTrain.df_parmY];
             y_valid      = pd.concat([y_valid, self.addJitter(y_valid, DataTrain.df_parmY, False)]);
             y_valid_data = np.array(self.toTimeSeries(y_valid, n_in, n_out));
             
             # df_parmx_train
+            self.logger.debug("Priprava dat df_parmx train...");
             x_train      = DataTrain.train[DataTrain.df_parmx];
             x_train      = pd.concat([x_train, self.addJitter(x_train, DataTrain.df_parmx, True)]);
             x_train_data = np.array(self.toTimeSeries(x_train, n_in, n_out));
             
             # df_parmx_valid
+            self.logger.debug("Priprava dat df_parmx valid...");
             x_valid      = DataTrain.valid[DataTrain.df_parmx];
-            x_valid      = pd.concat([x_valid, self.addJitter(x_valid, DataTrain.df_parmx, False)]);
+            x_valid      = pd.concat([x_valid, self.addJitter(x_valid, DataTrain.df_parmx, True)]);
             x_valid_data = np.array(self.toTimeSeries(x_valid, n_in, n_out));
 
             if (x_train_data.size == 0 or y_train_data.size == 0):
                 return();
 
         # Scaler pro X  
+            self.logger.debug("Scaler X...");
             self.x_scaler = StandardScaler(); 
             self.x_scaler.fit(x_train_data);
             x_train_data = self.x_scaler.transform(x_train_data);
@@ -2047,6 +2057,7 @@ class NeuronLayerLSTM():
             X_valid = self.toTensorLSTM(x_valid_data, window=window_X);
         
         # Scaler pro Y  
+            self.logger.debug("Scaler Y...");
             self.y_scaler = StandardScaler(); 
             self.y_scaler.fit(y_train_data);
             y_train_data = self.y_scaler.transform(y_train_data);
@@ -2056,6 +2067,7 @@ class NeuronLayerLSTM():
             Y_valid = self.toTensorLSTM(y_valid_data, window=window_Y);
 
          # definice modelu   
+            self.logger.debug("Definice modelu...");
             neural_model = tf.keras.Sequential();
             initializer  = tf.keras.initializers.RandomUniform(minval=-0.05, maxval=0.05, seed=None)
             lr = tf.keras.optimizers.schedules.ExponentialDecay(
@@ -2103,6 +2115,8 @@ class NeuronLayerLSTM():
                     # pridej ke vstupu vrstvu Dense velikosti y_dim - zlepsuje
                     # predikci v ose Y
                     if layers_0:
+
+                        self.logger.debug("inner layer: 0");
                         neural_model.add(layers.Dense(
                                               units              = (y_dim * z_dim),
                                               activation         = "linear",
@@ -2138,6 +2152,7 @@ class NeuronLayerLSTM():
 # Ou# Output layer
 #---#------------------------------------------------------------------------    
             
+                self.logger.debug("output layer: 0");
                 neural_model.add(layers.Dense(Y_train.cols,
                                               activation="linear",
                                               kernel_initializer=initializer
@@ -2147,6 +2162,7 @@ class NeuronLayerLSTM():
 #---#------------------------------------------------------------------------    
 # Co# Compile layer    
 #---#------------------------------------------------------------------------
+                self.logger.debug("compile...");
                 neural_model.compile(
                                               optimizer = optimizer,
                                               loss      = myrmse,
@@ -2157,12 +2173,14 @@ class NeuronLayerLSTM():
 #---#------------------------------------------------------------------------    
 # Co# Optimize     
 #---#------------------------------------------------------------------------
+                self.logger.debug("callback...");
                 early_stopping   = tf.keras.callbacks.EarlyStopping(
                                               monitor        = "val_loss",
                                               patience       = 15,
                                               verbose        =  1,
                                  );
         
+                self.logger.debug("model checkpoint...");
                 save_best = tf.keras.callbacks.ModelCheckpoint(
                                               filepath       = self.weightsname,
                                               save_best_only = True,
@@ -2302,7 +2320,6 @@ class NeuronLayerLSTM():
 
             if self.typ == 'train':
                 self.logger.debug("Start threadu: %s v TRAIN modu " %(thread_name));
-
                 self.neuralNetworkLSTMFactory(self.data.DataTrainDim.DataTrain, thread_name);
             else:    
                 self.logger.debug("Start threadu: %s v PREDICT modu " %(thread_name));
@@ -3097,9 +3114,9 @@ def help (activations):
     print("                                 a pri velkych cislech preucena - coz je totez jako nedoucena.")
     print("                                 Jedna se tedy o podstatny parametr v procesu uceni site.")
     print(" ");
-    print("        --units_1         pocet neuronu v prvni sekci skryte vrstvy <32, 1024>");
+    print("        --units_1         pocet neuronu v prvni sekci skryte vrstvy <32, 4096>");
     print(" ");
-    print("        --units_2         pocet neuronu v druhe sekci skryte vrstvy <0, 1024>");
+    print("        --units_2         pocet neuronu v druhe sekci skryte vrstvy <0, 4096>");
     print("                          --units_2 = 0 druha skryta vrstva disable...");
     print(" ");
     print("        --layers_1        pocet vrstev prvni sekci skryte vrstvy <0, 6>")
@@ -3462,27 +3479,27 @@ def main(argv):
                         
             elif opt in ("-u1", "--units_1"):
                 try:
-                    r = range(8-1, 1024+1);
+                    r = range(8-1, 4096+1);
                     units_1 =  int(arg);
                     if units_1 not in r:
-                        print("Err: units_1 in <0, 1024>");
+                        print("Err: units_1 in <0, 4096>");
                         help(activations);
                         sys.exit(1);    
                 except:    
-                    print("Err: units_1 in <0, 1024>");
+                    print("Err: units_1 in <0, 4096>");
                     help(activations);
                     sys.exit(1);
 
             elif opt in ("-u2", "--units_2"):
                 try:
-                    r = range(-1, 1024+1);
+                    r = range(-1, 4096+1);
                     units_2 =  int(arg);
                     if units_2 not in r:
-                        print("Err: units_2 in <0, 1024>");
+                        print("Err: units_2 in <0, 4096>");
                         help(activations);
                         sys.exit(1);    
                 except:    
-                    print("Err: units_2 in <0, 1024>");
+                    print("Err: units_2 in <0, 4096>");
                     help(activations);
                     sys.exit(1);
 
