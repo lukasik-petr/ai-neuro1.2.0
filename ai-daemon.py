@@ -1215,23 +1215,20 @@ class DataFactory():
         current_time = time.time()
         utc_timestamp = datetime.utcfromtimestamp(current_time);
 
-        l_plc = [];        
-        l_plc_col = [];        
-        
-        l_plc.append( str(utc_timestamp)[0:19]);
-        l_plc_col.append("utc");
-
+        df_plc = pd.DataFrame();
         #prevod pro PLC (viz dokument Teplotni Kompenzace AI)
         #  10 = 0.001
         # 100 = 0.01 atd...
         
         for col in col_names_Y:
             if "dev" in col:
-                mmean = self.myIntFormat(df_result[col].mean() *10000);   
-                l_plc.append(mmean);                                      #  10 = 0.001 atd...
-                l_plc_col.append(col+"mean");
-                
-        return (pd.DataFrame([l_plc], columns=[l_plc_col]));
+                comp = self.myIntFormat(df_result[col].mean() *10000);
+                df_plc[col] = df_result[col];
+                df_plc[col+"_comp"] = comp;
+
+        df_plc["utc"] =  str(utc_timestamp)[0:19];
+        
+        return (df_plc);
         
         
 #-----------------------------------------------------------------------
@@ -1801,10 +1798,7 @@ class NeuronLayerLSTM():
         
         jitter = np.random.normal(0, 0.0005, df_size);
         self.logger.debug("prepJitter...");
-        #for i in range(len(jitter)):
-        #    jitter[i] = self.myFloatFormat(jitter[i]);
         return jitter;    
-        #return(pd.DataFrame(jitter, columns=["jitter"]));
 
 #------------------------------------------------------------------------
 # addJitter,  addJitter
@@ -1815,12 +1809,13 @@ class NeuronLayerLSTM():
             return(df);
        
         self.logger.debug("addJitter...");
+        dfj = pd.DataFrame();
         for col in df.head():
             if  col in df_cols and ptypes.is_numeric_dtype(df[col]):
                 self.logger.debug("appJitter... %s " %(col));
-                df[col] = df[col] + self.prepJitter(len(df));
+                dfj[col] = df[col] + self.prepJitter(len(df));
                 
-        return(df);
+        return(dfj);
         
 #------------------------------------------------------------------------
 # toTensoLSTM(self, dataset, window = 16):
