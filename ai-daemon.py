@@ -1210,26 +1210,31 @@ class DataFactory():
 #-----------------------------------------------------------------------
 # formatToPLC  - result
 #-----------------------------------------------------------------------
+#-----------------------------------------------------------------------
+# formatToPLC  - result
+#-----------------------------------------------------------------------
     def formatToPLC(self, df_result, col_names_Y):
         #curent timestamp UTC
         current_time = time.time()
         utc_timestamp = datetime.utcfromtimestamp(current_time);
 
-        df_plc = pd.DataFrame();
+        l_plc = [];        
+        l_plc_col = [];        
+        
+        l_plc.append( str(utc_timestamp)[0:19]);
+        l_plc_col.append("utc");
+
         #prevod pro PLC (viz dokument Teplotni Kompenzace AI)
         #  10 = 0.001
         # 100 = 0.01 atd...
         
         for col in col_names_Y:
             if "dev" in col:
-                comp = self.myIntFormat(df_result[col].mean() *10000);
-                df_plc[col] = df_result[col];
-                df_plc[col+"_comp"] = comp;
-
-        df_plc["utc"] =  str(utc_timestamp)[0:19];
-        
-        return (df_plc);
-        
+                mmean = self.myIntFormat(df_result[col].mean() *10000);   
+                l_plc.append(mmean);                                      #  10 = 0.001 atd...
+                l_plc_col.append(col+"mean");
+                
+        return (pd.DataFrame([l_plc], columns=[l_plc_col]));
         
 #-----------------------------------------------------------------------
 # saveDataResult  - result
