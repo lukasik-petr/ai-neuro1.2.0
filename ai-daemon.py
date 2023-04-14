@@ -254,7 +254,7 @@ class OPCAgent():
         
     
     # konstrukter    
-    def __init__(self, batch, debug_mode, plc_timer=2):
+    def __init__(self, batch, debug_mode, plc_timer=1):
         
         self.logger     = logging.getLogger("ai");
         self.prefix     = "opc.tcp://";
@@ -3322,7 +3322,7 @@ def main(argv):
     window         = 1;           # timeseries window
     n_in           = 0;           # timeseries(-) n_in  
     n_out          = 4;           # timeseries(+) n_out
-    plc_timer      = 2;           # perioda nacitani vzorku z PLC [s]
+    plc_timer      = 1;           # perioda nacitani vzorku z PLC [s]
     retrain_mode   = False;       # implicitni trenink
         
 #-----------------------------------------------------------------------------
@@ -3697,20 +3697,20 @@ def main(argv):
                     
             elif opt in ("-pt", "--plc_timer"):
                 try:
-                    r = range(1, 10+1);
+                    r = range(0, 10+1);
                     plc_timer = int(arg);
                     if plc_timer not in r:
                         if debug_mode:
-                            print("Err: plc_timer in <2, 10>[s]");
+                            print("Err: plc_timer in <1, 10>[s]");
                         else:    
-                            print("Err: plc_timer in <2, 10>[s]");
+                            print("Err: plc_timer in <1, 10>[s]");
                         help(activations);
                         sys.exit(1)    
                 except:    
                     if debug_mode:
-                        print("Err: plc_timer in <2, 10>[s]");
+                        print("Err: plc_timer in <1, 10>[s]");
                     else:    
-                        print("Err: plc_timer in <2, 10>[s]");
+                        print("Err: plc_timer in <1, 10>[s]");
                     help(activations);
                     sys.exit(1)
         
