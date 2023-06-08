@@ -112,11 +112,12 @@ import atexit;
 import signal; 
 import socket;
 
-
 try:
+    #Linux
     import daemon, daemon.pidfile;
 except ImportError:
-    daemon = None
+    #Windows
+    daemon = None;
 
 import lockfile;
 import random;
@@ -830,15 +831,61 @@ class DataFactory():
                    );
         #parametry z parm file - nacte parametry z ./parms/parms.txt
         self.getParmsFromFile();
-        
 
+#------------------------------------------------------------------------
+# interpolateLin
+#------------------------------------------------------------------------
+#    interpoluje data linearne - vyhlazeni schodu na merenych artefaktech
+#    u parametru typu 'dev' - odchylky [mikrometr]
+#------------------------------------------------------------------------
+
+    def interpolateLin(self, df):
+
+        x = len(df);
+
+        arr = df.values.tolist();
+    
+        arr_int = [];
+        start = 0;
+        diff  = 0;
+
+        for i in range(x):
+            if i > 0 and arr[i - 1] != arr[i]:
+                stop = i;
+    
+                d = stop - start;
+                if arr[i] >= arr[i - 1]:
+                    diff = (arr[i] - arr[i - 1]) / d;
+                else:    
+                    diff = (arr[i - 1] - arr[i]) / d;
+                for j in range(stop - start):
+                    if arr[i] >= arr[i - 1]:
+                        arr_int.append(arr[i - 1] + (diff * j));
+                    else:    
+                        arr_int.append(arr[i - 1] - (diff * j));
+                    
+                start = stop;
+    
+        l_arr =  len(arr);
+        l_arr_int = len(arr_int);
+
+        for k in range(l_arr - l_arr_int):        
+            arr_int.append(arr[i] + (diff * (j + 1)));
+
+        
+        return(arr_int);
+    
+            
 #------------------------------------------------------------------------
 # interpolateDF
 #------------------------------------------------------------------------
-#    interpoluje data splinem - vyhlazeni schodu na merenych artefaktech
+#    interpoluje data splinem nebo linearne.
+#    Vyhlazeni schodu na merenych artefaktech
 #    u parametru typu 'dev' - odchylky [mikrometr]
+#    Pozor - linearni interpolace je lepsi...
 #------------------------------------------------------------------------
     def interpolateDF(self, df, s_factor=0.001, ip_yesno=True, part="train"):
+
 
         test = False;
         s_factor = 0.095;     #optimalni velicina
@@ -859,21 +906,18 @@ class DataFactory():
         for i in range(len(col_names)):
            if "dev" in col_names[i]:
                
-        #       #interpolace univariantnim splinem
-                spl =  UnivariateSpline(x, df[col_names[i]],
-                                        k = 3,
-                                        s = s_factor
-                       );
-        #       #linearni interpolace
-                #spl =  inter.interp1d(x, df[col_names[i]],
-                #                      kind = 'quadratic',
-                #                      axis = -1,
-                #                      copy = True, 
-                #                      bounds_error = None,
-                #                      assume_sorted = False
-                #);
+               #interpolace univariantnim splinem
+               #spl =  UnivariateSpline(x, df[col_names[i]],
+               #                        k = 3,
+               #                        s = s_factor
+               #       );
+               #df[col_names[i]] = spl(x);
+               #print(df[col_names[i]], col_names[i]);
 
-                df[col_names[i]] = spl(x);
+               #linearni interpolace
+               spl =  self.interpolateLin(df[col_names[i]]);
+               df[col_names[i]] = spl;
+
 
                 
         if test:
@@ -883,9 +927,11 @@ class DataFactory():
                 df.to_csv(filename, mode = "a", index=False, header=False, float_format='%.5f');
             else:
                 df.to_csv(filename, mode = "w", index=False, header=True, float_format='%.5f');
+
             
         return df;
 
+        
 #------------------------------------------------------------------------
 # setDataX(self, df,  size_train, size_valid, size_test)
 # dopruceny pomer train/valid
@@ -1040,25 +1086,31 @@ class DataFactory():
                                     axis=0, 
                                     ignore_index=True
                     );
+
                 
+                # bordel v datech - excell pridava empty radky (nechapu!!!)...            
+                df.dropna(how="all", inplace=True)
                 # bordel pri domluve nazvoslovi...            
                 df.columns = df.columns.str.lower();
-                # interpoluj celou mnozinu data  
+                # interpoluj celou mnozinu data
+
                 df = self.interpolateDF(df=df, ip_yesno=ip_yesno, part="train");
             
                 # vyber dat dle timestampu
                 df["timestamp"] = pd.to_datetime(df["datetime"].str.slice(0, 18));
                 
-                # treninkova a validacni mnozina    
-                df = df[(df["timestamp"] > timestamp_start) & (df["timestamp"] <= timestamp_stop)];
+                # treninkova a validacni mnozina - dle timestampu   
+                #df = df[(df["timestamp"] > timestamp_start) & (df["timestamp"] <= timestamp_stop)];
                 
                 # Odfiltruj data kdy stroj byl vypnut
                 #df = df[(df["dev_y4"] != 0) & (df["dev_z4"] != 0)];
+                
                 #Pouze  data ve stavu 2 - masina obrabi...
                 df = df[(df["state"] > 0)];
                 
-                if len(df) <= 1:
+                if df is None or len(df) <= 1:
                     self.logger.error("Data pro trenink maji nulovou velikost - exit(1)");
+                    self.logger.error("adresar ./br_data patrne neobsahuje data pro trenink");
                     sys.exit(1);
 
                 #nactena kazda ilcnt-ta veta - zmenseni mnoziny dat pro uceni.
@@ -1258,7 +1310,7 @@ class DataFactory():
 
         if not saveresult:
             self.logger.debug(filename + " nevznikne.");
-            return;
+        #   return;
         else:
             self.logger.debug(filename + " vznikne.");
 
@@ -1965,6 +2017,23 @@ class NeuronLayerLSTM():
             icnt += 1;
         
         return(df_mean);
+
+#------------------------------------------------------------------------
+# Neuronova Vrstva - vymaz predchozi stopy po uceni
+#------------------------------------------------------------------------
+    def saveModelToNetron(self, model, yesno=False):
+
+        if yesno:
+            try: 
+                os.mkdir(Path("./models/netron"));
+            except OSError as error: 
+                pass;
+
+            model.save("./models/netron/model.h5")
+
+        return;
+        
+    
     
 #------------------------------------------------------------------------
 # Neuronova Vrstva - vymaz predchozi stopy po uceni
@@ -2210,6 +2279,7 @@ class NeuronLayerLSTM():
                 neural_model.summary();
 
                 neural_model.save(self.modelname);
+                self.saveModelToNetron(neural_model, True);
 
                 self.logger.info("%s: %.2f%%" % (neural_model.metrics_names[1], scores[1]*100));
                 stopTime = int(time.time());
@@ -2898,6 +2968,9 @@ class NeuroDaemon():
                 context.open();
                 with context:
                     self.runDaemon(threads_max_cnt = self.max_threads);
+                    
+                self.setPid(self.pidf);
+                    
                     
             except (Exception, getopt.GetoptError)  as ex:
                 traceback.print_exc();
