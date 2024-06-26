@@ -353,3 +353,12 @@ Podporovane typy siti
     models_1    = ["DENSE","LSTM","GRU","CONV1D"];
     models_2    = ["DENSE","LSTM","GRU","CONV1D",""];
 
+
+CONDA
+-----------------------------------------------------------------------
+prostredi pro spusteni skriptu - tf.yaml
+
+conda env create -f tf.yaml
+
+
+
